@@ -181,6 +181,15 @@ async def handle_grafana_post(
 
     await _set_or_delete(store, K.GRAFANA_URL, url)
     await _set_or_delete(store, K.GRAFANA_USER, username)
+    cleared = False
+    if not url:
+        # Credentials are only kept together with the host they belong to; otherwise a later
+        # save with a new host would send them there without the host-change check firing.
+        cleared = any([await store.get(K.GRAFANA_PASSWORD) is not None,
+                       await store.get(K.GRAFANA_TOKEN) is not None])
+        await store.delete(K.GRAFANA_PASSWORD)
+        await store.delete(K.GRAFANA_TOKEN)
+        new_password = new_token = ""
     if new_password:
         await store.set(K.GRAFANA_PASSWORD, new_password, secret=True)
     if new_token:
@@ -190,7 +199,7 @@ async def handle_grafana_post(
     await record(db, user, "grafana", "settings:grafana", {
         "url": sanitize(url), "user": username, "ds_uid": ds_uid,
         "password_changed": bool(new_password), "token_changed": bool(new_token),
-        "queries_overridden": sorted(queries),
+        "queries_overridden": sorted(queries), "credentials_cleared": cleared,
     })
     if form.get("action") != "test":
         return None, None, False

@@ -363,6 +363,28 @@ async def test_grafana_host_change_requires_secrets_again(client, logged_in_admi
     assert r.status_code == 200 and grafana.args == ("http://new.lab", "viewer", "new-pw", None)
 
 
+async def test_clearing_grafana_url_drops_credentials(client, logged_in_admin, db, store,
+                                                      grafana):
+    await store.set(K.GRAFANA_URL, "http://grafana.lab")
+    await store.set(K.GRAFANA_PASSWORD, "old-pw", secret=True)
+    await store.set(K.GRAFANA_TOKEN, "old-tok", secret=True)
+    await db.commit()
+    r = await client.post("/admin/integrations/grafana", data={**GRAFANA_FORM, "url": "",
+                                                              "password": "typed-pw"})
+    assert r.status_code == 303
+    assert await fresh(db, store, K.GRAFANA_URL) is None
+    assert await store.get(K.GRAFANA_PASSWORD) is None and await store.get(K.GRAFANA_TOKEN) is None
+    entry = (await db.scalars(select(AuditLog).where(AuditLog.action == "admin.grafana")
+                              .order_by(AuditLog.id.desc()))).first()
+    assert entry.details["credentials_cleared"] is True
+    r = await client.post("/admin/integrations/grafana", data={
+        **GRAFANA_FORM, "action": "test", "url": "http://evil.example"})
+    assert r.status_code == 200
+    assert grafana.args == ("http://evil.example", "viewer", None, None)
+    assert await fresh(db, store, K.GRAFANA_PASSWORD) is None
+    assert await store.get(K.GRAFANA_TOKEN) is None
+
+
 async def test_grafana_test_failure_shown(client, logged_in_admin, grafana):
     grafana.fail = GrafanaError("HTTPStatusError: 401")
     r = await client.post("/admin/integrations/grafana", data={
