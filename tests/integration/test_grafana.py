@@ -100,3 +100,48 @@ async def test_nan_value_counts_as_missing():
     with respx.mock:
         respx.post(f"{BASE}/api/ds/query").mock(return_value=reply(frame("NaN")))
         assert await GrafanaClient(BASE, None, None, "t").instant_query("p1", "up") == []
+
+
+async def test_infinite_value_counts_as_missing():
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(return_value=reply(frame("+Inf"), frame("-Inf")))
+        assert await GrafanaClient(BASE, None, None, "t").instant_query("p1", "up") == []
+
+
+async def test_multiple_cpu_series_unavailable():
+    mapping = [("node_cpu_seconds_total", [frame(1.0), frame(2.0)]),
+               ("node_memory_MemAvailable_bytes", [frame(3.0)])]
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=by_query(mapping))
+        with pytest.raises(MetricsUnavailable):
+            await fetch_usage(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES, "srv", 0, NOW)
+
+
+async def test_duplicate_gpu_labels_unavailable():
+    mapping = [
+        ("node_cpu_seconds_total", [frame(1.0)]),
+        ("node_memory_MemAvailable_bytes", [frame(2.0)]),
+        ("FB_USED", [frame(30.0, {"gpu": "0"}), frame(31.0, {"gpu": "0"})]),
+        ("GPU_UTIL", [frame(5.0, {"gpu": "0"}), frame(6.0, {"gpu": "1"})]),
+    ]
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=by_query(mapping))
+        with pytest.raises(MetricsUnavailable):
+            await fetch_usage(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES, "srv", 2, NOW)
+
+
+async def test_instance_regex_escaped_only_in_regex_matchers():
+    seen = []
+
+    def side(request):
+        import json
+        seen.append(json.loads(request.content)["queries"][0]["expr"])
+        return reply(frame(1.0, {"gpu": "0"}))
+
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=side)
+        await fetch_usage(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES, "a.b", 1, NOW)
+    cpu = next(e for e in seen if "node_cpu" in e)
+    util = next(e for e in seen if e.startswith("DCGM_FI_DEV_GPU_UTIL"))
+    assert 'instance=~"a\\\\.b(:.*)?"' in cpu
+    assert 'Hostname="a.b"' in util

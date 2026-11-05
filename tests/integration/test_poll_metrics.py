@@ -23,7 +23,7 @@ def frame(value):
 
 def side(request):
     expr = json.loads(request.content)["queries"][0]["expr"]
-    if "bad-host" in expr:
+    if "badhost" in expr:
         return httpx.Response(200, json={"results": {"A": {"frames": []}}})
     return httpx.Response(200, json={"results": {"A": {"frames": [frame(7.0)]}}})
 
@@ -40,7 +40,7 @@ async def configure(store):
 async def test_poll_metrics_one_server_failing_others_saved(db, store, make_server):
     await configure(store)
     good = await make_server(name="good", kind="grafana", grafana_instance="good-host")
-    bad = await make_server(name="bad", kind="grafana", grafana_instance="bad-host")
+    bad = await make_server(name="bad", kind="grafana", grafana_instance="badhost")
     with respx.mock:
         respx.post(f"{BASE}/api/ds/query").mock(side_effect=side)
         res = await poll_metrics(db, store, factory, NOW)
@@ -80,3 +80,51 @@ async def test_prune_removes_older_than_48h(db, store, make_server):
     rec = await usage.recent(db, s.id, NOW - timedelta(days=5))
     assert rec == [new]
     assert (await usage.latest(db, s.id)) == new
+
+
+def inf_side(request):
+    expr = json.loads(request.content)["queries"][0]["expr"]
+    v = "+Inf" if "badhost" in expr else 7.0
+    return httpx.Response(200, json={"results": {"A": {"frames": [frame(v)]}}})
+
+
+async def test_poll_inf_value_fails_server_others_saved(db, store, make_server):
+    await configure(store)
+    bad = await make_server(name="bad", kind="grafana", grafana_instance="badhost")
+    good = await make_server(name="good", kind="grafana", grafana_instance="good-host")
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=inf_side)
+        res = await poll_metrics(db, store, factory, NOW)
+    assert res.ok == 1 and list(res.failed) == ["bad"]
+    assert await usage.latest(db, good.id) is not None
+
+
+async def test_poll_flush_failure_isolated(db, store, make_server, monkeypatch):
+    from sqlalchemy.exc import DBAPIError
+    await configure(store)
+    bad = await make_server(name="bad", kind="grafana", grafana_instance="badhost")
+    good = await make_server(name="good", kind="grafana", grafana_instance="good-host")
+    real = usage.save_snapshot
+
+    async def flaky(db_, server_id, u):
+        if server_id == bad.id:
+            raise DBAPIError("stmt", {}, Exception("boom"))
+        await real(db_, server_id, u)
+
+    monkeypatch.setattr(usage, "save_snapshot", flaky)
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(
+            return_value=httpx.Response(200, json={"results": {"A": {"frames": [frame(7.0)]}}}))
+        res = await poll_metrics(db, store, factory, NOW)
+    assert res.ok == 1 and list(res.failed) == ["bad"]
+    assert await usage.latest(db, good.id) is not None
+    assert (await store.get("health.last_poll"))["ok"] == 1
+
+
+async def test_poll_http_500_reported_failed(db, store, make_server):
+    await configure(store)
+    await make_server(name="s", kind="grafana", grafana_instance="s")
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(return_value=httpx.Response(500))
+        res = await poll_metrics(db, store, factory, NOW)
+    assert res.ok == 0 and "500" in res.failed["s"]

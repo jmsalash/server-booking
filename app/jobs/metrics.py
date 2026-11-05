@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.grafana import (
@@ -55,9 +56,10 @@ async def poll_metrics(
         try:
             u = await fetch_usage(client, ds_uid, queries, s.grafana_instance or s.hostname,
                                   s.gpu_count, now)
-            await usage_svc.save_snapshot(db, s.id, u)
+            async with db.begin_nested():
+                await usage_svc.save_snapshot(db, s.id, u)
             ok += 1
-        except (GrafanaError, MetricsUnavailable) as e:
+        except (GrafanaError, MetricsUnavailable, SQLAlchemyError) as e:
             failed[s.name] = str(e)
     await store.set(HEALTH_KEY, {"at": now.isoformat(), "ok": ok, "failed": failed})
     return PollResult(ok, failed)
