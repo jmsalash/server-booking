@@ -486,6 +486,37 @@ async def test_health_page(client, logged_in_admin, db, store, make_user, make_s
         assert text in r.text
 
 
+async def test_health_page_shows_worker_and_last_ok_poll(client, logged_in_admin, db, store):
+    await store.set(K.WORKER_HEARTBEAT, {
+        "at": (NOW - timedelta(seconds=30)).isoformat(), "bot_running": True,
+        "bot_username": "lab_bot",
+    })
+    await store.set(HEALTH_KEY, {"at": NOW.isoformat(), "ok": 0, "failed": {},
+                                 "last_ok_at": (NOW - timedelta(hours=1)).isoformat()})
+    await db.commit()
+    r = await client.get("/admin/health")
+    assert "Worker last seen Thu 05 10:59 (bot running" in r.text
+    assert "@lab_bot" in r.text
+    assert "Last successful poll: Thu 05 10:00" in r.text
+    assert "worker may be down" not in r.text
+
+
+async def test_health_page_warns_when_worker_silent(client, logged_in_admin, db, store):
+    await store.set(K.WORKER_HEARTBEAT, {
+        "at": (NOW - timedelta(minutes=3)).isoformat(), "bot_running": False,
+        "bot_username": None,
+    })
+    await db.commit()
+    r = await client.get("/admin/health")
+    assert "Worker last seen Thu 05 10:57 (bot not running)" in r.text
+    assert "worker may be down" in r.text
+
+
+async def test_health_page_without_heartbeat(client, logged_in_admin):
+    r = await client.get("/admin/health")
+    assert "The worker has not reported yet" in r.text
+
+
 async def test_health_page_sanitises_poll_errors(client, logged_in_admin, db, store):
     await store.set(K.GRAFANA_TOKEN, "tok-123", secret=True)
     await store.set(HEALTH_KEY, {"at": NOW.isoformat(), "ok": 0, "failed": {

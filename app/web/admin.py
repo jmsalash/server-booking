@@ -3,7 +3,7 @@ import json
 import re
 from collections.abc import Iterable
 from dataclasses import fields as dc_fields
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -759,6 +759,19 @@ async def bookings_cancel(
 # --- health ---------------------------------------------------------------------------------
 
 
+WORKER_SILENT_AFTER = timedelta(minutes=2)  # the worker reconciles every 10 s
+
+
+def _iso(value) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
 @router.get("/health")
 async def health_page(
     request: Request, user: User = Depends(admin_gate),
@@ -781,12 +794,10 @@ async def health_page(
         (K.TG_TOKEN, "bot token"), (K.TG_GROUP_ID, "group"), (K.TG_TOPIC_ID, "topic"),
     ) if await store.get(key) is None]
     last_poll = await store.get(HEALTH_KEY)
-    poll_at = None
-    if last_poll and last_poll.get("at"):
-        try:
-            poll_at = datetime.fromisoformat(last_poll["at"])
-        except ValueError:
-            poll_at = None
+    poll_at = _iso(last_poll.get("at")) if last_poll else None
+    last_ok_at = _iso(last_poll.get("last_ok_at")) if last_poll else None
+    heartbeat = await store.get(K.WORKER_HEARTBEAT)
+    worker_at = _iso(heartbeat.get("at")) if isinstance(heartbeat, dict) else None
     if last_poll and isinstance(last_poll.get("failed"), dict):
         secrets = (await store.get(K.GRAFANA_PASSWORD), await store.get(K.GRAFANA_TOKEN))
         last_poll = {**last_poll, "failed": {
@@ -794,6 +805,9 @@ async def health_page(
     rules = await store.get_rules()
     return render(request, "admin/health.html", {
         "user": user, "section": "health", "last_poll": last_poll, "poll_at": poll_at,
+        "last_ok_at": last_ok_at, "heartbeat": heartbeat if worker_at else None,
+        "worker_at": worker_at,
+        "worker_silent": worker_at is None or now - worker_at > WORKER_SILENT_AFTER,
         "tz": rules.timezone,
         "stale": [c.server.name for c in cards if c.stale and c.server.enabled],
         "outbox": sorted(outbox.items()), "bot_missing": missing,

@@ -145,3 +145,26 @@ async def test_poll_failure_messages_never_store_credentials(db, store, make_ser
     stored = (await store.get("health.last_poll"))["failed"]["m"]
     assert "refused" in stored and "hunter2" not in stored and "viewer" not in stored
     assert "hunter2" not in res.failed["m"]
+
+
+async def test_poll_keeps_last_ok_at(db, store, make_server):
+    await configure(store)
+    s = await make_server(name="good", kind="grafana", grafana_instance="good-host")
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=side)
+        await poll_metrics(db, store, factory, NOW)
+    assert (await store.get("health.last_poll"))["last_ok_at"] == NOW.isoformat()
+
+    s.grafana_instance = "badhost"  # every server fails now
+    later = NOW + timedelta(minutes=5)
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=side)
+        res = await poll_metrics(db, store, factory, later)
+    assert res.ok == 0
+    health = await store.get("health.last_poll")
+    assert health["at"] == later.isoformat() and health["last_ok_at"] == NOW.isoformat()
+
+    async def none(_):
+        return None
+    await poll_metrics(db, store, none, later + timedelta(minutes=5))
+    assert (await store.get("health.last_poll"))["last_ok_at"] == NOW.isoformat()

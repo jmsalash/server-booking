@@ -2,9 +2,22 @@
 {% block title %}Health — Admin{% endblock %}
 {% block admin_content %}
 <section class="panel">
+  <h1>Worker</h1>
+  {% if heartbeat %}
+  <p>Worker last seen {{ worker_at|day_hm(tz) }} (bot {{ "running" if heartbeat.bot_running else "not running" }}{% if heartbeat.bot_running and heartbeat.bot_username %} as @{{ heartbeat.bot_username }}{% endif %}).</p>
+  {% else %}
+  <p>The worker has not reported yet.</p>
+  {% endif %}
+  {% if worker_silent %}
+  <p class="banner banner--warn">⚠️ No heartbeat for over 2 minutes — the worker may be down.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
   <h1>Metrics polling</h1>
   {% if last_poll %}
   <p>Last poll: {{ poll_at|day_hm(tz) if poll_at else last_poll.at }} — {{ last_poll.ok }} server(s) OK, {{ last_poll.failed|length }} failed.{% if last_poll.note %} <span class="muted">{{ last_poll.note }}</span>{% endif %}</p>
+  <p>Last successful poll: {{ last_ok_at|day_hm(tz) if last_ok_at else "never" }}</p>
   {% if last_poll.failed %}
   <table class="list">
     <thead><tr><th>Server</th><th>Error</th></tr></thead>
@@ -42,7 +55,7 @@
   {% if bot_missing %}
   <p>Bot: not configured (missing {{ bot_missing|join(", ") }}).</p>
   {% else %}
-  <p>Bot: configured. <span class="muted">The web app cannot see whether the worker is running.</span></p>
+  <p>Bot: configured.</p>
   {% endif %}
   <h2>Users who blocked the bot</h2>
   {% if blocked %}<ul>{% for u in blocked %}<li>{{ u.display_name }}{% if u.username %} (@{{ u.username }}){% endif %}</li>{% endfor %}</ul>{% else %}<p class="muted">None.</p>{% endif %}

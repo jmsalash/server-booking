@@ -40,10 +40,12 @@ async def poll_metrics(
     client_factory: Callable[[SettingsStore], Awaitable[GrafanaClient | None]],
     now: datetime,
 ) -> PollResult:
+    previous = await store.get(HEALTH_KEY) or {}
+    last_ok = {"last_ok_at": previous["last_ok_at"]} if previous.get("last_ok_at") else {}
     client = await client_factory(store)
     if client is None:
         await store.set(HEALTH_KEY, {"at": now.isoformat(), "ok": 0, "failed": {},
-                                     "note": "Grafana not configured"})
+                                     "note": "Grafana not configured", **last_ok})
         return PollResult(0, {})
     ds_uid = await store.get(K.GRAFANA_DS_UID)
     queries = {**DEFAULT_QUERIES, **(await store.get(K.GRAFANA_QUERIES) or {})}
@@ -62,7 +64,9 @@ async def poll_metrics(
             ok += 1
         except (GrafanaError, MetricsUnavailable, SQLAlchemyError) as e:
             failed[s.name] = redact(str(e), secrets)  # never persist credentials
-    await store.set(HEALTH_KEY, {"at": now.isoformat(), "ok": ok, "failed": failed})
+    if ok > 0:
+        last_ok = {"last_ok_at": now.isoformat()}
+    await store.set(HEALTH_KEY, {"at": now.isoformat(), "ok": ok, "failed": failed, **last_ok})
     return PollResult(ok, failed)
 
 
