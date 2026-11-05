@@ -14,6 +14,8 @@ NOW = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
 
 
 class FakeBot:
+    username = "lab_bot"
+
     async def get_me(self):
         return type("Me", (), {"id": 1, "username": "b"})()
 
@@ -141,3 +143,36 @@ async def test_corrupt_secret_does_not_block_reconcile(worker, app_log, sessionm
     await worker.reconcile(NOW)
     assert worker.bot_app.token == "tok1"
     assert worker.grafana is None
+
+
+async def _heartbeat(sessionmaker, box):
+    async with sessionmaker() as s:
+        return await SettingsStore(s, box).get(K.WORKER_HEARTBEAT)
+
+
+async def test_reconcile_writes_heartbeat(worker, sessionmaker, box):
+    await worker.reconcile(NOW)
+    assert await _heartbeat(sessionmaker, box) == {
+        "at": NOW.isoformat(), "bot_running": False, "bot_username": None,
+    }
+    await _set_token(sessionmaker, box, "tok1")
+    later = NOW.replace(minute=1)
+    await worker.reconcile(later)
+    assert await _heartbeat(sessionmaker, box) == {
+        "at": later.isoformat(), "bot_running": True, "bot_username": "lab_bot",
+    }
+
+
+async def test_heartbeat_failure_is_logged_not_raised(worker, monkeypatch, caplog):
+    async def broken(self, key, value, secret=False):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(SettingsStore, "set", broken)
+    await worker.reconcile(NOW)  # does not raise
+    assert "heartbeat" in caplog.text
+
+
+def test_scheduler_has_housekeeping_job(worker):
+    sched = worker.build_scheduler()
+    assert sched.get_job("prune_housekeeping") is not None
+    assert sched.get_job("prune_snapshots") is not None

@@ -472,3 +472,30 @@ async def test_run_job_survives_failing_rollback(caplog):
         await run_job("boom", boom, lambda: BrokenSession())
     assert "job boom failed" in caplog.text
     assert "rollback after job boom failed" in caplog.text
+
+
+# --- maintenance --------------------------------------------------------------------------------
+
+
+async def test_prune_housekeeping(db, store, make_user):
+    from app.jobs.maintenance import prune_housekeeping
+    from app.models import LoginToken, Session
+
+    now = L("2026-11-10T10:00")
+    user = await make_user()
+    db.add_all([
+        LoginToken(token="old", expires_at=now - timedelta(days=1, minutes=1)),
+        LoginToken(token="recent", expires_at=now - timedelta(hours=23)),
+        Session(id="gone", user_id=user.id, expires_at=now - timedelta(seconds=1)),
+        Session(id="live", user_id=user.id, expires_at=now + timedelta(days=1)),
+        OutboxItem(kind="k", payload={}, done_at=now - timedelta(days=7, minutes=1)),
+        OutboxItem(kind="k", payload={}, done_at=now - timedelta(days=6)),
+        OutboxItem(kind="k", payload={}, done_at=None, created_at=now - timedelta(days=30)),
+    ])
+    await db.flush()
+    counts = await prune_housekeeping(db, store, now)
+    assert counts == {"login_tokens": 1, "sessions": 1, "outbox_items": 1}
+    assert (await db.scalars(select(LoginToken.token))).all() == ["recent"]
+    assert (await db.scalars(select(Session.id))).all() == ["live"]
+    left = (await db.scalars(select(OutboxItem.done_at).order_by(OutboxItem.id))).all()
+    assert left == [now - timedelta(days=6), None]

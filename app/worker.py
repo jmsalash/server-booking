@@ -16,7 +16,7 @@ from app.db import make_engine, make_sessionmaker
 from app.integrations.gcal import GoogleCalendarClient
 from app.integrations.grafana import GrafanaClient
 from app.integrations.telegram_gateway import PtbGateway
-from app.jobs import lifecycle, membership, metrics, monitor
+from app.jobs import lifecycle, maintenance, membership, metrics, monitor
 from app.jobs.runner import run_job
 from app.services import calendar_sync, notify, outbox
 from app.settings_store import K, SettingsStore
@@ -39,6 +39,7 @@ class Worker:
         self._fp: dict[str, str | None] = {"bot": None, "grafana": None, "gcal": None}
         self.scheduler: AsyncIOScheduler | None = None
         self._failed: dict[str, str] = {}
+        self._heartbeat_failed = False
 
     # ---- reconcile -------------------------------------------------------
     async def _read(self, *keys: str) -> list | None:
@@ -76,6 +77,29 @@ class Worker:
                     log.error("reconcile %s failed (%s); will retry", name, type(e).__name__)
             else:
                 self._failed.pop(name, None)
+        await self._heartbeat(now)
+
+    def _bot_username(self) -> str | None:
+        try:
+            return self.bot_app.bot.username if self.bot_app is not None else None
+        except Exception:  # noqa: BLE001  not initialised / unexpected bot object
+            return None
+
+    async def _heartbeat(self, now: datetime) -> None:
+        """Tell the web health page the worker is alive; own transaction, never raises."""
+        try:
+            async with self.sessionmaker() as db:
+                await SettingsStore(db, self.box).set(K.WORKER_HEARTBEAT, {
+                    "at": now.isoformat(), "bot_running": self.bot_app is not None,
+                    "bot_username": self._bot_username(),
+                })
+                await db.commit()
+        except Exception as e:  # noqa: BLE001
+            if not self._heartbeat_failed:  # log once until it works again
+                log.error("worker heartbeat failed (%s)", type(e).__name__)
+            self._heartbeat_failed = True
+        else:
+            self._heartbeat_failed = False
 
     async def _reconcile_bot(self, token: str | None) -> None:
         fp = _h(token) if token else None
@@ -187,6 +211,8 @@ class Worker:
                       id="membership_sync")
         sched.add_job(job("prune_snapshots", self._store_job(metrics.prune_snapshots)),
                       "interval", hours=1, id="prune_snapshots")
+        sched.add_job(job("prune_housekeeping", self._store_job(maintenance.prune_housekeeping)),
+                      "interval", hours=1, id="prune_housekeeping")
         return sched
 
     # ---- lifecycle -------------------------------------------------------

@@ -25,6 +25,7 @@ class K:
     SETUP_CODE_HASH = "setup_code_hash"
     SETUP_COMPLETED = "setup_completed"
     RULES = "rules"
+    WORKER_HEARTBEAT = "worker.heartbeat"  # {"at": iso, "bot_running": bool, "bot_username"}
 
 
 SECRET_KEYS = frozenset({K.TG_TOKEN, K.GRAFANA_PASSWORD, K.GRAFANA_TOKEN, K.GCAL_SA_JSON})
