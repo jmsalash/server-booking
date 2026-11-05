@@ -566,3 +566,57 @@ async def test_poll_without_login_cookie_never_logs_in(client, db, store, web_ap
 
     r = await client.get(f"/login/poll/{token}")  # the browser that asked can still log in
     assert r.headers["hx-redirect"] == "/"
+
+
+# --- deadlock -------------------------------------------------------------------------------
+
+
+class _PgError(Exception):
+    def __init__(self, sqlstate):
+        super().__init__(f"sqlstate {sqlstate}")
+        self.sqlstate = sqlstate
+
+
+@pytest.mark.parametrize("route,target", [
+    ("/book", "create_booking"),
+    ("/bookings/{id}/cancel", "cancel_booking"),
+    ("/bookings/{id}/end", "end_early"),
+    ("/bookings/{id}/extend", "extend"),
+])
+async def test_deadlock_returns_busy_page(client, db, logged_in, make_server, monkeypatch,
+                                          route, target):
+    from sqlalchemy.exc import DBAPIError
+
+    from app.services import booking as booking_svc
+
+    s = await make_server(name="cpu-01")
+    b = await _add(db, logged_in, s, NOW + timedelta(hours=3), NOW + timedelta(hours=5))
+    await db.commit()
+
+    async def deadlock(*a, **kw):
+        raise DBAPIError("UPDATE bookings ...", {}, _PgError("40P01"))
+
+    monkeypatch.setattr(booking_svc, target, deadlock)
+    r = await client.post(route.format(id=b.id), data={
+        "server_id": s.id, "start": "2026-11-10T14:00", "end": "2026-11-10T16:00",
+        "resource": "cpu",
+    })
+    assert r.status_code == 409
+    assert "The system was busy — please try again." in r.text
+
+
+async def test_other_db_errors_are_not_masked(client, db, logged_in, make_server, monkeypatch):
+    from sqlalchemy.exc import DBAPIError
+
+    from app.services import booking as booking_svc
+
+    s = await make_server(name="cpu-01")
+    await db.commit()
+
+    async def broken(*a, **kw):
+        raise DBAPIError("INSERT ...", {}, _PgError("23502"))
+
+    monkeypatch.setattr(booking_svc, "create_booking", broken)
+    with pytest.raises(DBAPIError):
+        await client.post("/book", data={"server_id": s.id, "start": "2026-11-10T14:00",
+                                         "end": "2026-11-10T16:00", "resource": "cpu"})

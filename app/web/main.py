@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app import clock
@@ -18,7 +19,15 @@ from app.web import admin, portal, setup_routes
 from app.web.deps import LoginRequired, make_login_signer, make_signer
 
 setup_log = logging.getLogger("app.setup")
+log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
+DEADLOCK_SQLSTATE = "40P01"
+BUSY_TEXT = "The system was busy — please try again."
+
+
+def _sqlstate(exc: DBAPIError) -> str | None:
+    orig = exc.orig
+    return getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
 
 
 def create_app(
@@ -87,6 +96,16 @@ def create_app(
     @app.exception_handler(PermissionError)
     async def _forbidden(request: Request, exc: PermissionError):
         return HTMLResponse("You are not allowed to do that.", status_code=403)
+
+    @app.exception_handler(DBAPIError)
+    async def _db_busy(request: Request, exc: DBAPIError):
+        # Concurrent booking writes and the worker jobs lock rows (servers, then bookings by
+        # id); if Postgres still detects a deadlock, the victim gets a retry hint, not a 500.
+        if _sqlstate(exc) != DEADLOCK_SQLSTATE:
+            raise exc
+        log.warning("deadlock on %s %s; asked the user to retry",
+                          request.method, request.url.path)
+        return HTMLResponse(BUSY_TEXT, status_code=409)
 
     @app.exception_handler(LookupError)
     async def _not_found(request: Request, exc: LookupError):
