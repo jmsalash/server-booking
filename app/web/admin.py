@@ -499,7 +499,7 @@ async def servers_page(
 ):
     notice = None
     raw = request.query_params.get("added", "")
-    if raw.isdigit() and 0 <= int(raw) <= MAX_IMPORT_ROWS:
+    if raw.isascii() and raw.isdigit() and 0 <= int(raw) <= MAX_IMPORT_ROWS:
         added = int(raw)
         notice = f"Added {added} server{'' if added == 1 else 's'}."
     return await _render_servers(request, db, store, user, notice=notice)
@@ -513,23 +513,30 @@ def _duplicate_error(name: str) -> str:
 
 
 async def _machine_index(
-    request: Request, db: AsyncSession, extra: list[set[str]]
+    request: Request, db: AsyncSession, extra: list[set[str]], resolve: bool = True
 ) -> MachineIndex:
     """Index of every existing server; DNS for them and `extra` is resolved once, bounded."""
     index = MachineIndex(request.app.state.resolver)
     await index.load([(s.id, s.name, machine_keys(s.hostname, s.grafana_instance))
-                      for s in await inventory.list_servers(db)], extra)
+                      for s in await inventory.list_servers(db)], extra, resolve=resolve)
     return index
 
 
 async def _check_same_machine(
-    request: Request, db: AsyncSession, fields: dict, errors: list[str], server_id: int | None
+    request: Request, db: AsyncSession, fields: dict, errors: list[str],
+    server: Server | None,
 ) -> None:
     keys = machine_keys(fields["hostname"], fields["grafana_instance"])
     if not keys:
         return
-    index = await _machine_index(request, db, [keys])
-    if (other := index.find(keys, exclude_id=server_id)) is not None:
+    # Editing without touching hostname/instance: compare names only, so a later DNS change
+    # that makes two servers share an address never blocks toggling enabled or notes.
+    use_addresses = server is None or keys != machine_keys(server.hostname,
+                                                           server.grafana_instance)
+    index = await _machine_index(request, db, [keys], resolve=use_addresses)
+    other = index.find(keys, exclude_id=server.id if server else None,
+                       use_addresses=use_addresses)
+    if other is not None:
         errors.append(_duplicate_error(other))
 
 
@@ -706,7 +713,7 @@ async def server_update(
     if server is None:
         raise LookupError(f"server {server_id} not found")
     values, fields, errors = await _parse_server_form(db, await request.form(), server.id)
-    await _check_same_machine(request, db, fields, errors, server.id)
+    await _check_same_machine(request, db, fields, errors, server)
     if errors:
         return _render_server_edit(request, user, server.id, values, errors, 400)
     was_enabled = server.enabled

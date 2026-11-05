@@ -80,3 +80,46 @@ async def test_add_detects_duplicates_within_a_batch():
     assert idx.find({"x.lab"}) is None
     idx.add("x", {"x.lab"})
     assert idx.find({"10.0.0.1"}) == "x"
+
+
+async def test_loopback_and_other_non_identifying_addresses_ignored():
+    idx = MachineIndex(resolver({"a.lab": {"127.0.1.1", "fe80::1"}, "b.lab": {"127.0.1.1",
+                                                                             "fe80::1"}}))
+    await idx.load([(1, "a", {"a.lab"})], [{"b.lab"}])
+    assert idx.find({"b.lab"}) is None
+    for literal in ("127.0.0.1", "::1", "0.0.0.0", "224.0.0.1", "240.0.0.1", "169.254.1.1"):
+        idx = MachineIndex(resolver({"a.lab": {literal}}))
+        await idx.load([(1, "a", {"a.lab"})], [{literal}])
+        assert idx.find({literal}) is None, literal
+
+
+async def test_ipv4_mapped_ipv6_matches_ipv4():
+    assert machine_keys("[::ffff:10.0.0.5]:9100") == {"10.0.0.5"}
+    idx = MachineIndex(resolver({"a.lab": {"::ffff:10.0.0.5"}}))
+    await idx.load([(1, "a", {"a.lab"})], [{"10.0.0.5"}])
+    assert idx.find({"10.0.0.5"}) == "a"
+
+
+async def test_find_without_addresses_compares_keys_only():
+    idx = MachineIndex(resolver({"a.lab": {"10.0.0.5"}, "b.lab": {"10.0.0.5"}}))
+    await idx.load([(1, "a", {"a.lab"})], [{"b.lab"}])
+    assert idx.find({"b.lab"}, use_addresses=False) is None
+    assert idx.find({"a.lab"}, use_addresses=False) == "a"
+
+
+async def test_default_resolver_filters_and_uses_dedicated_pool(monkeypatch):
+    import socket
+    import threading
+
+    from app.services import machine_identity as mi
+
+    seen = []
+
+    def fake_getaddrinfo(name, port):
+        seen.append(threading.current_thread().name)
+        return [(None, None, None, "", ("127.0.1.1", 0)), (None, None, None, "", ("10.0.0.5", 0)),
+                (None, None, None, "", ("::ffff:10.0.0.6", 0, 0, 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    assert await mi.resolve("x.lab") == {"10.0.0.5", "10.0.0.6"}
+    assert seen[0].startswith("dns")

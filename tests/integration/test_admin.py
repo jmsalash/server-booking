@@ -447,8 +447,26 @@ async def test_edit_not_flagged_against_itself_but_against_others(client, logged
     dns.update({"cpu-07.lab": {"10.0.0.7"}, "alias.lab": {"10.0.0.8"}})
     r = await client.post(f"/admin/servers/{s.id}", data={**SERVER_FORM, "notes": "x"})
     assert r.status_code == 303
-    dns["alias.lab"] = {"10.0.0.7"}
-    r = await client.post(f"/admin/servers/{s.id}", data={**SERVER_FORM, "notes": "y"})
+    dns["mon.lab"] = {"10.0.0.8"}  # a changed instance that is really "alias"
+    r = await client.post(f"/admin/servers/{s.id}", data={**SERVER_FORM,
+                                                          "grafana_instance": "mon.lab"})
+    assert r.status_code == 400 and "already exists as &#34;alias&#34;" in r.text
+
+
+async def test_edit_with_unchanged_keys_skips_ip_check(client, logged_in_admin, db,
+                                                      make_server, dns):
+    s = await make_server(name="cpu-07", hostname="cpu-07.lab")
+    await make_server(name="alias", hostname="alias.lab")
+    await db.commit()
+    dns.update({"cpu-07.lab": {"10.0.0.7"}, "alias.lab": {"10.0.0.7"}})  # DNS changed later
+    r = await client.post(f"/admin/servers/{s.id}", data={**SERVER_FORM, "notes": "toggle"})
+    assert r.status_code == 303
+    # a changed key is checked by IP again
+    r = await client.post(f"/admin/servers/{s.id}", data={**SERVER_FORM, "grafana_instance":
+                                                          "cpu-07.lab:9100", "notes": "z"})
+    assert r.status_code == 303  # same normalised key set: still unchanged
+    r = await client.post(f"/admin/servers/{s.id}", data={**SERVER_FORM, "hostname": "new.lab",
+                                                          "grafana_instance": "cpu-07.lab"})
     assert r.status_code == 400 and "already exists as &#34;alias&#34;" in r.text
 
 
@@ -491,6 +509,8 @@ async def test_added_notice_is_clamped(client, logged_in_admin):
     assert "Added" not in r.text
     r = await client.get("/admin/servers?added=-3")
     assert "Added" not in r.text
+    r = await client.get("/admin/servers?added=²")
+    assert r.status_code == 200 and "Added" not in r.text
     r = await client.get("/admin/servers?added=1")
     assert "Added 1 server." in r.text
 

@@ -35,8 +35,9 @@ The web UI listens on port 8000. The only configuration is `DATABASE_URL`
 3. Add the bot to your group as a normal member: do **not** make it an admin, and
    leave privacy mode on (the BotFather default; do not run `/setprivacy`). The
    bot only needs to read its own commands and post in the booking topic.
-4. Open `/admin/setup/bind`, then within 15 minutes send `/bind` in the
-   machine-booking topic (if the group has other bots, send `/bind@<your_bot>`).
+4. Open `/admin/setup/bind`, then within 15 minutes send `/bind@<your_bot>`
+   (for example `/bind@lab_booking_bot`) in the machine-booking topic. With
+   privacy mode on, Telegram reliably delivers only commands addressed to the bot.
    Confirm the group name shown in the page. You must be a group admin, and your
    admin rights must not have "Remain anonymous" turned on, or the bot cannot
    tell who sent `/bind`.
@@ -120,6 +121,10 @@ In Telegram: 🟢 available, 🟠 booked soon, 🔴 booked, 🔴➜🟢 free soo
 **Bot commands.** `/status` lists all servers (`/status <server>` shows one in
 detail), `/free` lists servers that are free now, and `/notify <server>` asks
 the bot to message you when that server becomes free.
+In the group topic, address commands to the bot: `/status@<your_bot>`,
+`/free@<your_bot>`, `/notify@<your_bot> <server>`. With privacy mode on,
+Telegram reliably delivers only commands addressed to the bot. In a private chat
+with the bot, plain `/status` works.
 
 ## Operations
 

@@ -140,9 +140,14 @@ async def on_start(ctx: BotContext, tg: TgUser, payload: str | None, now: dateti
                 return Reply(NOT_SET_UP)
             return Reply(LOGIN_PROMPT, [(LOGIN_BUTTON, f"login:{payload}")])
         portal = await _portal(store)
+        bot = await store.get(K.TG_BOT_USERNAME)
+    text = "👋 Hi! Use /status or /free here."
+    if bot:
+        # With privacy mode on, Telegram reliably delivers only commands addressed to the bot.
+        text += f" In the group, use /status@{bot} or /free@{bot}."
     if portal:
-        return Reply(f"👋 Hi! Use /status or /free here, or book on the portal: {portal}")
-    return Reply("👋 Hi! Use /status or /free here.")
+        text += f" Book on the portal: {portal}"
+    return Reply(text)
 
 
 def _window_open(value: str | None, now: datetime) -> bool:

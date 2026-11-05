@@ -188,8 +188,13 @@ async def test_start_without_payload_greets(bot_ctx, db, store):
     assert r.text == "👋 Hi! Use /status or /free here."
     await _configure(db, store)
     r = await on_start(bot_ctx, ANA, None, NOW)
-    assert r.text == f"👋 Hi! Use /status or /free here, or book on the portal: {URL}"
+    assert r.text == f"👋 Hi! Use /status or /free here. Book on the portal: {URL}"
     assert r.buttons is None
+    await store.set(K.TG_BOT_USERNAME, "lab_bot")
+    await db.commit()
+    r = await on_start(bot_ctx, ANA, None, NOW)
+    assert r.text == ("👋 Hi! Use /status or /free here. In the group, use /status@lab_bot or "
+                      f"/free@lab_bot. Book on the portal: {URL}")
 
 
 async def test_start_with_token_asks_then_button_confirms_login(bot_ctx, db, store):
