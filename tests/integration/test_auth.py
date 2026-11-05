@@ -3,7 +3,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.integrations.telegram_gateway import MemberStatus
-from app.models import AuditLog, Booking, Session
+import asyncio
+
+from app.models import AuditLog, Booking, LoginToken, Session
 from app.services.auth import (
     LoginOutcome, TgUser, confirm_login, consume_login, create_login_token,
     session_user, sync_membership,
@@ -55,6 +57,7 @@ async def test_expired_token(db):
 async def test_non_member_rejected(db):
     t = await create_login_token(db, now)
     assert await confirm_login(db, t, tg, FakeTelegram(), G, now) == LoginOutcome.NOT_MEMBER
+    assert (await db.get(LoginToken, t)).confirmed_at is None
     assert await consume_login(db, t, now) is None
 
 
@@ -126,3 +129,21 @@ async def test_sync_gateway_error_skips_user(db, store, make_user):
     res = await sync_membership(db, store, Flaky(), G, now)
     await db.refresh(a); await db.refresh(b)
     assert res.deactivated == [b.id] and a.active and not b.active
+
+
+async def test_concurrent_consume_is_single_use(sessionmaker):
+    async with sessionmaker() as s:
+        t = await create_login_token(s, now)
+        await confirm_login(s, t, tg, _tg(), G, now)
+        await s.commit()
+
+    async def attempt():
+        async with sessionmaker() as s:
+            sid = await consume_login(s, t, now)
+            await s.commit()
+            return sid
+
+    results = await asyncio.gather(attempt(), attempt())
+    assert sorted(r is None for r in results) == [False, True]
+    async with sessionmaker() as s:
+        assert len((await s.execute(select(Session))).scalars().all()) == 1

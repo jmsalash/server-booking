@@ -45,10 +45,18 @@ async def create_login_token(db: AsyncSession, now: datetime) -> str:
     return token
 
 
+async def _lock_token(db: AsyncSession, token: str) -> LoginToken | None:
+    return (
+        await db.execute(
+            select(LoginToken).where(LoginToken.token == token).with_for_update()
+        )
+    ).scalar_one_or_none()
+
+
 async def confirm_login(
     db: AsyncSession, token: str, tg: TgUser, gateway: TelegramGateway, group_id: int, now: datetime
 ) -> LoginOutcome:
-    row = await db.get(LoginToken, token)
+    row = await _lock_token(db, token)
     if row is None:
         return LoginOutcome.UNKNOWN_TOKEN
     if now >= row.expires_at or row.consumed_at is not None:
@@ -75,7 +83,7 @@ async def confirm_login(
 
 
 async def consume_login(db: AsyncSession, token: str, now: datetime) -> str | None:
-    row = await db.get(LoginToken, token)
+    row = await _lock_token(db, token)
     if (
         row is None
         or row.confirmed_at is None
