@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -17,10 +17,13 @@ from app.services.inventory import list_servers
 from app.settings_store import K, SettingsStore
 from app.web.deps import (
     COOKIE,
+    LOGIN_COOKIE,
+    LOGIN_MAX_AGE,
     SESSION_MAX_AGE,
     current_user,
     get_db,
     get_store,
+    login_token_from_cookie,
     session_id_from_cookie,
     templates,
 )
@@ -32,7 +35,7 @@ ERROR_TEXT: dict[BookingError, str] = {
     BookingError.NOT_HOUR_ALIGNED: "Bookings start and end on the hour.",
     BookingError.END_NOT_AFTER_START: "The end must be after the start.",
     BookingError.IN_PAST: "The start time is in the past.",
-    BookingError.TOO_LONG: "Bookings can be at most {max_days} days.",
+    BookingError.TOO_LONG: "Bookings can be at most {limit}.",
     BookingError.NO_GPU: "This server has no GPU — choose CPU only.",
     BookingError.CONFLICT: "That time overlaps another booking.",
     BookingError.SHARE_MUST_START_NOW: "A shared booking must start now.",
@@ -42,13 +45,38 @@ ERROR_TEXT: dict[BookingError, str] = {
 RESOURCES = ("cpu", "cpu_gpu")
 BAD_FORM = "Please choose a server and fill in a valid start and end."
 TIMELINE_DAYS = 14
+MAX_ID = 2**31 - 1  # ids are int4; larger values would make asyncpg raise
+MIN_YEAR, MAX_YEAR = 2000, 2100
 EXPIRED_FRAGMENT = (
     '<p class="notice">Link expired — reload <a href="/login">the login page</a>.</p>'
 )
 
 
+def max_length_text(hours: int) -> str:
+    if hours % 24 == 0:
+        days = hours // 24
+        return f"{days} day" if days == 1 else f"{days} days"
+    return f"{hours} hour" if hours == 1 else f"{hours} hours"
+
+
 def error_text(error: BookingError, rules: Rules) -> str:
-    return ERROR_TEXT[error].format(max_days=rules.max_booking_hours // 24)
+    return ERROR_TEXT[error].format(limit=max_length_text(rules.max_booking_hours))
+
+
+def parse_form_dt(value, tz: str) -> datetime | None:
+    """A datetime-local form value as UTC, or None if missing, malformed or out of range."""
+    try:
+        dt = parse_local(str(value or ""), tz)
+    except (ValueError, OverflowError):
+        return None
+    return dt if MIN_YEAR <= dt.year <= MAX_YEAR else None
+
+
+def check_id(value: int) -> int:
+    """Path ids outside int4 cannot exist: treat them as not found."""
+    if not 1 <= value <= MAX_ID:
+        raise LookupError(f"id {value} out of range")
+    return value
 
 
 def legend(rules: Rules) -> list[tuple[str, str, str]]:
@@ -93,15 +121,23 @@ async def login_page(
         return _render(request, "login.html", {"configured": False})
     token = await auth.create_login_token(db, clock.utcnow())
     await db.commit()
-    return _render(request, "login.html", {
+    resp = _render(request, "login.html", {
         "configured": True, "token": token, "link": f"https://t.me/{bot}?start={token}",
     })
+    resp.set_cookie(
+        LOGIN_COOKIE, request.app.state.login_signer.dumps(token), max_age=LOGIN_MAX_AGE,
+        path="/login", httponly=True, samesite="lax", secure=request.url.scheme == "https",
+    )
+    return resp
 
 
 @router.get("/login/poll/{token}")
 async def login_poll(request: Request, token: str, db: AsyncSession = Depends(get_db)):
     now = clock.utcnow()
-    sid = await auth.consume_login(db, token, now)
+    # Only the browser that opened /login for this token may turn it into a session.
+    sid = None
+    if login_token_from_cookie(request) == token:
+        sid = await auth.consume_login(db, token, now)
     if sid is None:
         row = await db.get(LoginToken, token)
         if row is None or row.consumed_at is not None or now >= row.expires_at:
@@ -113,6 +149,7 @@ async def login_poll(request: Request, token: str, db: AsyncSession = Depends(ge
         COOKIE, request.app.state.signer.dumps(sid), max_age=SESSION_MAX_AGE, path="/",
         httponly=True, samesite="lax", secure=request.url.scheme == "https",
     )
+    resp.delete_cookie(LOGIN_COOKIE, path="/login", httponly=True, samesite="lax")
     return resp
 
 
@@ -162,15 +199,16 @@ async def board_cards(
 
 def _int(value) -> int | None:
     try:
-        return int(value)
+        n = int(value)
     except (TypeError, ValueError):
         return None
+    return n if 1 <= n <= MAX_ID else None
 
 
 async def _render_book(
     request: Request, db: AsyncSession, store: SettingsStore, user: User,
     server_id: int | None, values: dict, status: int = 200,
-    error: str | None = None, share_with: str | None = None,
+    error: str | None = None, share_with: str | None = None, warned: dict | None = None,
 ) -> HTMLResponse:
     now = clock.utcnow()
     rules = await store.get_rules()
@@ -188,7 +226,8 @@ async def _render_book(
                   "end": local(start + timedelta(hours=2), rules.timezone)}
     return _render(request, "book.html", {
         "user": user, "servers": servers, "selected": selected, "timeline": timeline,
-        "values": values, "error": error, "share_with": share_with, "tz": rules.timezone,
+        "values": values, "error": error, "share_with": share_with, "warned": warned,
+        "tz": rules.timezone,
         "legend": legend(rules),
     }, status)
 
@@ -204,6 +243,16 @@ async def book_page(
     return await _render_book(request, db, store, user, _int(server_id), {})
 
 
+def _share_confirmed(form, server_id: int, values: dict) -> bool:
+    """confirm_shared counts only for the exact server and times the warning was shown for."""
+    return (
+        form.get("confirm_shared") == "1"
+        and form.get("warned_server_id") == str(server_id)
+        and form.get("warned_start") == values["start"]
+        and form.get("warned_end") == values["end"]
+    )
+
+
 @router.post("/book")
 async def book_submit(
     request: Request,
@@ -215,23 +264,21 @@ async def book_submit(
     values = {k: str(form.get(k, "")) for k in ("start", "end", "resource")}
     server_id = _int(form.get("server_id"))
     rules = await store.get_rules()
-    try:
-        start = parse_local(values["start"], rules.timezone)
-        end = parse_local(values["end"], rules.timezone)
-    except ValueError:
-        start = end = None
+    start = parse_form_dt(values["start"], rules.timezone)
+    end = parse_form_dt(values["end"], rules.timezone)
     server = await db.get(Server, server_id) if server_id is not None else None
-    if start is None or server is None or values["resource"] not in RESOURCES:
+    if start is None or end is None or server is None or values["resource"] not in RESOURCES:
         return await _render_book(request, db, store, user, server_id, values, 400, BAD_FORM)
     try:
         await booking.create_booking(
             db, store, user, server.id, start, end, values["resource"], clock.utcnow(),
-            confirm_shared=form.get("confirm_shared") == "1",
+            confirm_shared=_share_confirmed(form, server.id, values),
         )
     except booking.ShareConfirmationRequired as e:
         await _rollback(db, user)
+        warned = {"server_id": str(server_id), "start": values["start"], "end": values["end"]}
         return await _render_book(request, db, store, user, server_id, values,
-                                  share_with=e.share_with)
+                                  share_with=e.share_with, warned=warned)
     except booking.BookingRejected as e:
         await _rollback(db, user)
         return await _render_book(request, db, store, user, server_id, values, 400,
@@ -274,7 +321,7 @@ async def cancel(
     db: AsyncSession = Depends(get_db),
     store: SettingsStore = Depends(get_store),
 ):
-    await booking.cancel_booking(db, store, booking_id, actor=user, now=clock.utcnow())
+    await booking.cancel_booking(db, store, check_id(booking_id), actor=user, now=clock.utcnow())
     await db.commit()
     return _redirect("/me")
 
@@ -286,7 +333,7 @@ async def end_now(
     db: AsyncSession = Depends(get_db),
     store: SettingsStore = Depends(get_store),
 ):
-    await booking.end_early(db, store, booking_id, actor=user, now=clock.utcnow())
+    await booking.end_early(db, store, check_id(booking_id), actor=user, now=clock.utcnow())
     await db.commit()
     return _redirect("/me")
 
@@ -301,13 +348,12 @@ async def extend(
 ):
     form = await request.form()
     rules = await store.get_rules()
-    try:
-        new_end = parse_local(str(form.get("end", "")), rules.timezone)
-    except ValueError:
+    new_end = parse_form_dt(form.get("end"), rules.timezone)
+    if new_end is None:
         return await _render_me(request, db, store, user, 400,
                                 "Please fill in a valid new end time.")
     try:
-        await booking.extend(db, store, booking_id, user, new_end, clock.utcnow())
+        await booking.extend(db, store, check_id(booking_id), user, new_end, clock.utcnow())
     except booking.BookingRejected as e:
         await _rollback(db, user)
         return await _render_me(request, db, store, user, 400, error_text(e.error, rules))
@@ -322,7 +368,7 @@ async def extend(
 async def watch(
     server_id: int, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
-    if await db.get(Server, server_id) is None:
+    if await db.get(Server, check_id(server_id)) is None:
         raise LookupError(f"server {server_id} not found")
     await watchlist.subscribe(db, user.id, server_id, clock.utcnow())
     await db.commit()
@@ -333,6 +379,6 @@ async def watch(
 async def unwatch(
     sub_id: int, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
-    await watchlist.unsubscribe(db, sub_id, user.id)
+    await watchlist.unsubscribe(db, check_id(sub_id), user.id)
     await db.commit()
     return _redirect("/me")

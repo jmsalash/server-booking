@@ -28,6 +28,9 @@
     <p class="muted">Times are in {{ tz }}; bookings start and end on the hour.</p>
     {% if share_with %}
     <input type="hidden" name="confirm_shared" value="1">
+    <input type="hidden" name="warned_server_id" value="{{ warned.server_id }}">
+    <input type="hidden" name="warned_start" value="{{ warned.start }}">
+    <input type="hidden" name="warned_end" value="{{ warned.end }}">
     <button type="submit">Book and share</button>
     {% else %}
     <button type="submit">Book</button>

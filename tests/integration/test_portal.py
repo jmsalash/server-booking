@@ -3,6 +3,7 @@ import re
 import secrets
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 import pytest_asyncio
 import respx
@@ -12,10 +13,11 @@ import app.clock
 from app.domain.booking_rules import BookingError
 from app.domain.types import ServerUsage
 from app.integrations.telegram_gateway import MemberStatus
-from app.models import Booking, OutboxItem, Session, WatchSubscription
+from app.domain.rules import Rules
+from app.models import Booking, LoginToken, OutboxItem, Session, WatchSubscription
 from app.services import auth, usage
 from app.settings_store import K
-from app.web.portal import ERROR_TEXT
+from app.web.portal import ERROR_TEXT, error_text, max_length_text
 from tests.fakes import FakeTelegram
 
 NOW = datetime(2026, 11, 9, 10, 20, tzinfo=UTC)  # Mon 09, 11:20 Europe/Rome
@@ -194,7 +196,11 @@ async def test_share_warning_then_confirm(client, logged_in, db, make_user, make
     assert 'name="confirm_shared" value="1"' in r.text
     assert len(await _bookings(db, s.id)) == 1
 
-    r = await client.post("/book", data={**form, "confirm_shared": "1"})
+    for field in ("warned_server_id", "warned_start", "warned_end"):
+        assert f'name="{field}"' in r.text
+    warned = {"warned_server_id": str(s.id), "warned_start": form["start"],
+              "warned_end": form["end"]}
+    r = await client.post("/book", data={**form, "confirm_shared": "1", **warned})
     assert r.status_code == 303 and r.headers["location"] == "/me"
     mine = [b for b in await _bookings(db, s.id) if b.user_id == logged_in.id]
     assert len(mine) == 1 and mine[0].is_shared
@@ -460,3 +466,103 @@ async def test_static_assets_served(client):
     assert r.status_code == 200 and ".dot--free_soon" in r.text
     r = await client.get("/static/htmx.min.js")
     assert r.status_code == 200
+
+
+# --- fix round 1 ----------------------------------------------------------------------------
+
+
+async def test_htmx_unauthenticated_gets_hx_redirect(client, db):
+    r = await client.get("/board/cards", headers={"HX-Request": "true"})
+    assert r.status_code != 303 and "location" not in r.headers
+    assert r.headers["hx-redirect"] == "/login"
+    assert await db.scalar(select(func.count()).select_from(LoginToken)) == 0
+
+
+@pytest.mark.parametrize("value", ["0001-01-01T00:00", "9999-12-31T23:00", "1999-12-31T10:00"])
+async def test_out_of_range_dates_400(client, logged_in, db, make_server, value):
+    s = await make_server(name="srv")
+    b = await _add(db, logged_in, s, datetime(2026, 11, 10, 8, tzinfo=UTC),
+                   datetime(2026, 11, 10, 10, tzinfo=UTC))
+    await db.commit()
+    r = await client.post("/book", data={"server_id": s.id, "start": value,
+                                         "end": "2026-11-10T16:00", "resource": "cpu"})
+    assert r.status_code == 400 and "Please" in r.text
+    r = await client.post("/book", data={"server_id": s.id, "start": "2026-11-10T14:00",
+                                         "end": value, "resource": "cpu"})
+    assert r.status_code == 400
+    r = await client.post(f"/bookings/{b.id}/extend", data={"end": value})
+    assert r.status_code == 400
+
+
+async def test_oversized_ids_are_not_found(client, logged_in):
+    big = 99999999999
+    assert (await client.post(f"/bookings/{big}/cancel")).status_code == 404
+    assert (await client.post(f"/bookings/{big}/end")).status_code == 404
+    r = await client.post(f"/bookings/{big}/extend", data={"end": "2026-11-10T13:00"})
+    assert r.status_code == 404
+    assert (await client.post(f"/watch/{big}")).status_code == 404
+    assert (await client.post(f"/watch/{big}/delete")).status_code == 404
+    r = await client.post("/book", data={"server_id": big, "start": "2026-11-10T14:00",
+                                         "end": "2026-11-10T16:00", "resource": "cpu"})
+    assert r.status_code == 400
+    assert (await client.get(f"/book?server_id={big}")).status_code == 200
+
+
+async def test_share_confirmation_void_when_values_changed(
+    client, logged_in, db, make_user, make_server
+):
+    bob = await make_user(display_name="Bob")
+    s = await make_server(name="shr", kind="grafana", shareable=True)
+    await _add(db, bob, s, datetime(2026, 11, 9, 10, tzinfo=UTC), datetime(2026, 11, 9, 14, tzinfo=UTC))
+    for m in range(0, 60, 5):
+        await usage.save_snapshot(db, s.id, ServerUsage(NOW - timedelta(minutes=m), 20.0, 20.0, ()))
+    await db.commit()
+    warned = {"confirm_shared": "1", "warned_server_id": str(s.id),
+              "warned_start": "2026-11-09T11:00", "warned_end": "2026-11-09T13:00"}
+    # The end was edited after the warning: warn again instead of booking.
+    r = await client.post("/book", data={"server_id": s.id, "start": "2026-11-09T11:00",
+                                         "end": "2026-11-09T14:00", "resource": "cpu", **warned})
+    assert r.status_code == 200
+    assert "This server is in use by Bob. Resources will be shared." in r.text
+    assert 'name="warned_end" value="2026-11-09T14:00"' in r.text
+    # confirm_shared alone (no warned values) is not enough either.
+    r = await client.post("/book", data={"server_id": s.id, "start": "2026-11-09T11:00",
+                                         "end": "2026-11-09T13:00", "resource": "cpu",
+                                         "confirm_shared": "1"})
+    assert r.status_code == 200 and "Resources will be shared." in r.text
+    assert len(await _bookings(db, s.id)) == 1
+
+
+def test_too_long_copy_days_or_hours():
+    assert max_length_text(336) == "14 days"
+    assert max_length_text(24) == "1 day"
+    assert max_length_text(30) == "30 hours"
+    assert max_length_text(1) == "1 hour"
+    assert error_text(BookingError.TOO_LONG, Rules(max_booking_hours=30)) == (
+        "Bookings can be at most 30 hours."
+    )
+
+
+async def test_poll_without_login_cookie_never_logs_in(client, db, store, web_app):
+    await _configure_bot(db, store)
+    r = await client.get("/login")
+    token = _token(r.text)
+    login_cookie = r.headers["set-cookie"]
+    assert login_cookie.startswith("sb_login=") and "HttpOnly" in login_cookie
+    assert "samesite=lax" in login_cookie.lower()
+    fake = FakeTelegram(members={42: MemberStatus.MEMBER})
+    await auth.confirm_login(db, token, auth.TgUser(42, "ana", "Ana"), fake, GROUP, NOW)
+    await db.commit()
+
+    transport = httpx.ASGITransport(app=web_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as attacker:
+        for _ in range(2):
+            r = await attacker.get(f"/login/poll/{token}")
+            assert r.status_code == 204 and "set-cookie" not in r.headers
+        attacker.cookies.set("sb_login", "forged")
+        r = await attacker.get(f"/login/poll/{token}")
+        assert r.status_code == 204 and "set-cookie" not in r.headers
+    assert await db.scalar(select(func.count()).select_from(Session)) == 0
+
+    r = await client.get(f"/login/poll/{token}")  # the browser that asked can still log in
+    assert r.headers["hx-redirect"] == "/"

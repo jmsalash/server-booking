@@ -15,6 +15,8 @@ from app.settings_store import SettingsStore
 
 COOKIE = "sb_session"
 SESSION_MAX_AGE = int(auth.SESSION_TTL.total_seconds())
+LOGIN_COOKIE = "sb_login"  # binds a login token to the browser that requested it
+LOGIN_MAX_AGE = 2 * int(auth.TOKEN_TTL.total_seconds())
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.filters["day_hm"] = format_day_hm
@@ -29,6 +31,20 @@ class LoginRequired(Exception):
 
 def make_signer(key: bytes) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(key, salt="sb-session")
+
+
+def make_login_signer(key: bytes) -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(key, salt="sb-login")
+
+
+def login_token_from_cookie(request: Request) -> str | None:
+    raw = request.cookies.get(LOGIN_COOKIE)
+    if not raw:
+        return None
+    try:
+        return request.app.state.login_signer.loads(raw, max_age=LOGIN_MAX_AGE)
+    except BadSignature:
+        return None
 
 
 def session_id_from_cookie(request: Request) -> str | None:

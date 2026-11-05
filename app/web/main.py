@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -15,7 +15,7 @@ from app.db import make_engine, make_sessionmaker
 from app.services import setup
 from app.settings_store import SettingsStore
 from app.web import portal
-from app.web.deps import LoginRequired, make_signer
+from app.web.deps import LoginRequired, make_login_signer, make_signer
 
 setup_log = logging.getLogger("app.setup")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -56,6 +56,7 @@ def create_app(
     app.state.data_dir = data_dir
     app.state.box = SecretBox(key)
     app.state.signer = make_signer(key)
+    app.state.login_signer = make_login_signer(key)
 
     @app.middleware("http")
     async def reject_foreign_origin(request: Request, call_next):
@@ -67,10 +68,10 @@ def create_app(
 
     @app.exception_handler(LoginRequired)
     async def _login_required(request: Request, exc: LoginRequired):
-        resp = RedirectResponse("/login", status_code=303)
         if request.headers.get("hx-request"):
-            resp.headers["HX-Redirect"] = "/login"
-        return resp
+            # A 303 would be followed by the browser and htmx would swap the login page in.
+            return Response(status_code=204, headers={"HX-Redirect": "/login"})
+        return RedirectResponse("/login", status_code=303)
 
     @app.exception_handler(PermissionError)
     async def _forbidden(request: Request, exc: PermissionError):
