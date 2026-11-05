@@ -12,7 +12,10 @@ from alembic.config import Config
 from testcontainers.postgres import PostgresContainer
 
 import app.models  # noqa: F401  (register tables on Base.metadata)
+from app.crypto import SecretBox
 from app.db import Base, make_sessionmaker
+from app.settings_store import SettingsStore
+from cryptography.fernet import Fernet
 from app.web.main import create_app
 
 
@@ -57,6 +60,16 @@ async def sessionmaker(_engine):
 async def db(sessionmaker):
     async with sessionmaker() as session:
         yield session
+
+
+@pytest.fixture
+def box():
+    return SecretBox(Fernet.generate_key())
+
+
+@pytest_asyncio.fixture
+async def store(db, box):
+    return SettingsStore(db, box)
 
 
 @pytest_asyncio.fixture
