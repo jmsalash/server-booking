@@ -231,3 +231,18 @@ async def test_wizard_grafana_shows_default_queries_and_help(client, code):
     assert r.status_code == 200
     assert "node_cpu_seconds_total" in r.text and "DCGM_FI_DEV_GPU_UTIL" in r.text
     assert "{instance_re}" in r.text and "=~" in r.text
+
+
+async def test_reset_setup_reopens_wizard_for_anonymous_visitor(client, code, db, store):
+    await enter_code(client, code)
+    await setup.complete_setup(store)
+    await db.commit()
+    client.cookies.clear()
+    assert (await client.get("/admin/setup/telegram")).status_code in (303, 403)
+
+    new = await setup.ensure_setup_code(db, store, NOW, reset=True)
+    await db.commit()
+    assert await fresh(db, store, K.SETUP_COMPLETED, True) is False
+    await enter_code(client, new)
+    page = await client.get("/admin/setup/telegram")
+    assert page.status_code == 200 and 'name="token"' in page.text

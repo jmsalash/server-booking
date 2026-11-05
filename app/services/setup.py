@@ -23,6 +23,8 @@ async def ensure_setup_code(
         return None
     raw = "".join(secrets.choice(ALPHABET) for _ in range(12))
     await store.set(K.SETUP_CODE_HASH, _hash(raw))
+    if reset:
+        await store.set(K.SETUP_COMPLETED, False)  # re-open the wizard so the code is usable
     return f"{raw[:4]}-{raw[4:8]}-{raw[8:]}"
 
 

@@ -46,12 +46,14 @@ The web UI listens on port 8000. The only configuration is `DATABASE_URL`
    - `{instance_re}` is the regex-escaped value for `=~` matchers (e.g.
      `instance=~"{instance_re}(:.*)?"`, which also matches `host:9100`).
 
-   To inspect what your Grafana exposes, run the probe (read the password
-   without echoing it or storing it in shell history):
+   To inspect what your Grafana exposes, run the probe on the host (`scripts/`
+   is not in the image) from a dev venv (`python -m venv .venv && .venv/bin/pip
+   install httpx`), reading the password without echoing it or storing it in
+   shell history:
 
        read -rs GF_PW
-       python scripts/grafana_probe.py --url https://grafana.lab --user me --password "$GF_PW"
-       # or: python scripts/grafana_probe.py --url https://grafana.lab --token glsa_...
+       .venv/bin/python scripts/grafana_probe.py --url https://grafana.lab --user me --password "$GF_PW"
+       # or: .venv/bin/python scripts/grafana_probe.py --url https://grafana.lab --token glsa_...
        unset GF_PW
 
 7. Google Calendar: create a service account in Google Cloud, enable the Google
@@ -120,8 +122,10 @@ re-enter the Telegram, Grafana and Google credentials. Example:
     RESET_SETUP=1 docker compose up -d
     docker compose logs web | grep "SETUP CODE"
 
-then unset it (plain `docker compose up -d`) once finished, so a new code is not
-issued on every restart.
+This issues a new code and re-opens the setup wizard (the existing group binding
+is kept; confirm or reset it in the bind step). Unset `RESET_SETUP` afterwards
+(plain `docker compose up -d`): every restart with it set issues a new code and
+re-opens setup.
 
 **Reverse proxy.** The proxy must preserve the `Host` header (POSTs with an
 `Origin` that differs from `Host` are rejected). Uvicorn runs with
