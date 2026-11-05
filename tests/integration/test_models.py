@@ -50,8 +50,14 @@ async def test_end_must_be_after_start(db, make_user, make_server):
         await db.flush()
 
 
-async def test_orm_and_migrated_schema_table_names_agree(db):
-    rows = await db.execute(text(
-        "select table_name from information_schema.tables where table_schema='public'"))
-    live = {r[0] for r in rows} - {"alembic_version"}
-    assert live == {t.name for t in Base.metadata.sorted_tables}
+async def test_orm_and_migrated_schema_agree(db):
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    def diff(sync_conn):
+        ctx = MigrationContext.configure(sync_conn)
+        return compare_metadata(ctx, Base.metadata)
+
+    conn = await db.connection()
+    result = await conn.run_sync(diff)
+    assert result == []
