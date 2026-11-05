@@ -34,7 +34,9 @@ class FakeGrafana:
     def __init__(self, fail: Exception | None = None, values: dict | None = None):
         self.fail = fail
         self.values = values or {}
+        self.series: dict[str, list[Series] | Exception] = {}  # needle -> labelled series
         self.args = None
+        self.queries: list[str] = []
 
     async def list_datasources(self):
         if self.fail:
@@ -43,8 +45,14 @@ class FakeGrafana:
                 Datasource("loki1", "Loki", "loki")]
 
     async def instant_query(self, ds_uid, expr):
+        self.queries.append(expr)
         if self.fail:
             raise self.fail
+        for needle, out in self.series.items():
+            if needle in expr:
+                if isinstance(out, Exception):
+                    raise out
+                return out
         for needle, v in self.values.items():
             if needle in expr:
                 return [Series({}, v)]
@@ -237,6 +245,161 @@ async def test_fetch_usage_error_sanitized(client, logged_in_admin, db, store, m
     r = await client.post(f"/admin/servers/{s.id}/fetch")
     assert "GrafanaError" in r.text and "refused" in r.text
     assert "hunter2" not in r.text
+
+
+# --- import from Grafana --------------------------------------------------------------------
+
+
+async def _configure_grafana(db, store):
+    await store.set(K.GRAFANA_URL, "http://grafana.lab")
+    await store.set(K.GRAFANA_DS_UID, "prom1")
+    await db.commit()
+
+
+def _discovered(grafana, gpu=None):
+    grafana.series["count by (instance)"] = [
+        Series({"instance": "gpu-01.lab:9100"}, 64), Series({"instance": "cpu-02:9100"}, 8),
+        Series({"instance": "old-03:9100"}, 4)]
+    grafana.series["count by (Hostname)"] = gpu if gpu is not None else [
+        Series({"Hostname": "gpu-01"}, 4)]
+
+
+def _import_row(i, instance, name=None, gpu_count="0", selected=True, shareable=False):
+    row = {f"instance_{i}": instance, f"name_{i}": instance if name is None else name,
+           f"gpu_count_{i}": gpu_count}
+    if selected:
+        row[f"selected_{i}"] = "on"
+    if shareable:
+        row[f"shareable_{i}"] = "on"
+    return row
+
+
+async def test_servers_page_import_button_only_when_configured(client, logged_in_admin, db,
+                                                               store, grafana):
+    r = await client.get("/admin/servers")
+    assert 'href="/admin/servers/import"' not in r.text
+    assert "configure it on the" in r.text
+    await _configure_grafana(db, store)
+    r = await client.get("/admin/servers")
+    assert 'href="/admin/servers/import"' in r.text
+    assert grafana.queries == []  # plain page loads never talk to Grafana
+
+
+async def test_import_page_lists_hosts_and_marks_existing(client, logged_in_admin, db, store,
+                                                          make_server, grafana):
+    await make_server(name="Legacy", kind="grafana", grafana_instance="OLD-03:9100")
+    await make_server(name="CPU-02", kind="standalone")
+    await _configure_grafana(db, store)
+    _discovered(grafana)
+    r = await client.get("/admin/servers/import")
+    assert r.status_code == 200
+    assert 'value="gpu-01.lab"' in r.text and 'value="cpu-02"' in r.text
+    assert 'name="gpu_count_1" value="4"' in r.text  # sorted: cpu-02, gpu-01.lab, old-03
+    assert r.text.count("already added") == 2
+    assert r.text.count("disabled") >= 2
+    assert grafana.args[0] == "http://grafana.lab"
+
+
+async def test_import_page_gpu_failure_note(client, logged_in_admin, db, store, grafana):
+    await _configure_grafana(db, store)
+    _discovered(grafana, gpu=GrafanaError("HTTPStatusError: 500"))
+    r = await client.get("/admin/servers/import")
+    assert r.status_code == 200 and 'value="gpu-01.lab"' in r.text
+    assert "GPU count could not be read" in r.text
+
+
+async def test_import_page_empty_discovery(client, logged_in_admin, db, store, grafana):
+    await _configure_grafana(db, store)
+    r = await client.get("/admin/servers/import")
+    assert r.status_code == 200 and "No hosts found" in r.text
+
+
+async def test_import_page_grafana_error_sanitized(client, logged_in_admin, db, store, grafana):
+    await _configure_grafana(db, store)
+    await store.set(K.GRAFANA_PASSWORD, "hunter2", secret=True)
+    await db.commit()
+    grafana.fail = GrafanaError("ConnectError: http://admin:hunter2@grafana.lab refused")
+    r = await client.get("/admin/servers/import")
+    assert r.status_code == 200
+    assert "GrafanaError" in r.text and "refused" in r.text and "hunter2" not in r.text
+
+
+async def test_import_page_not_configured_hint(client, logged_in_admin, grafana):
+    r = await client.get("/admin/servers/import")
+    assert r.status_code == 200 and "Grafana is not configured" in r.text
+    assert 'name="instance_0"' not in r.text
+    assert grafana.args is None and grafana.queries == []
+
+
+async def test_import_creates_ticked_servers(client, logged_in_admin, db, store, grafana):
+    form = {**_import_row(0, "cpu-02", "CPU two"),
+            **_import_row(1, "gpu-01.lab", "gpu-01", "4", shareable=True),
+            **_import_row(2, "old-03", selected=False)}
+    r = await client.post("/admin/servers/import", data=form)
+    assert r.status_code == 303 and r.headers["location"].startswith("/admin/servers")
+    db.expire_all()
+    rows = {s.name: s for s in (await db.scalars(select(Server))).all()}
+    assert set(rows) == {"CPU two", "gpu-01"}
+    g = rows["gpu-01"]
+    assert (g.kind, g.grafana_instance, g.hostname, g.has_gpu, g.gpu_count, g.shareable,
+            g.enabled) == ("grafana", "gpu-01.lab", "gpu-01.lab", True, 4, True, True)
+    c = rows["CPU two"]
+    assert (c.has_gpu, c.gpu_count, c.shareable) == (False, 0, False)
+    entry = await db.scalar(select(AuditLog).where(AuditLog.action == "admin.servers_import"))
+    assert entry.details["names"] == ["CPU two", "gpu-01"]
+    page = await client.get(r.headers["location"])
+    assert "Added 2 servers" in page.text
+    assert grafana.queries == []  # POST does not re-run discovery
+
+
+async def test_import_invalid_row_creates_nothing(client, logged_in_admin, db, make_server):
+    await make_server(name="taken")
+    await db.commit()
+    form = {**_import_row(0, "cpu-02"), **_import_row(1, "gpu-01", "gpu-01", "99"),
+            **_import_row(2, "x-03", "TAKEN"), **_import_row(3, "y-04", "")}
+    r = await client.post("/admin/servers/import", data=form)
+    assert r.status_code == 400
+    assert "from 1 to 64" in r.text and "already exists" in r.text and "Enter a name" in r.text
+    assert 'value="cpu-02"' in r.text  # table re-rendered with the submitted rows
+    db.expire_all()
+    assert [s.name for s in (await db.scalars(select(Server))).all()] == ["taken"]
+
+
+async def test_import_rejects_duplicates_within_batch_and_existing_instance(
+        client, logged_in_admin, db, make_server):
+    await make_server(name="legacy", kind="grafana", grafana_instance="old-03:9100")
+    await db.commit()
+    r = await client.post("/admin/servers/import", data={
+        **_import_row(0, "a", "same"), **_import_row(1, "b", "SAME")})
+    assert r.status_code == 400 and "already exists" in r.text
+    r = await client.post("/admin/servers/import", data=_import_row(0, "old-03", "new-name"))
+    assert r.status_code == 400 and "already added" in r.text
+    db.expire_all()
+    assert len((await db.scalars(select(Server))).all()) == 1
+
+
+async def test_import_nothing_ticked(client, logged_in_admin, db):
+    r = await client.post("/admin/servers/import", data=_import_row(0, "a", selected=False))
+    assert r.status_code == 400 and "Tick at least one" in r.text
+
+
+async def test_import_forbidden_for_members(client, logged_in_member, grafana):
+    assert (await client.get("/admin/servers/import")).status_code == 403
+    r = await client.post("/admin/servers/import", data=_import_row(0, "a"))
+    assert r.status_code == 403
+    assert grafana.queries == []
+
+
+async def test_integrations_page_shows_and_saves_discovery_queries(client, logged_in_admin, db,
+                                                                   store, grafana):
+    r = await client.get("/admin/integrations")
+    assert 'name="q_discover_hosts"' in r.text and 'name="q_discover_gpus"' in r.text
+    assert "count by (instance)" in r.text
+    await client.post("/admin/integrations/grafana", data={
+        "action": "save", "url": "http://grafana.lab", "user": "", "password": "", "token": "",
+        "ds_uid": "", "q_discover_hosts": "count by (instance) (up)"})
+    assert (await fresh(db, store, K.GRAFANA_QUERIES))["discover_hosts"] == (
+        "count by (instance) (up)")
 
 
 # --- rules ----------------------------------------------------------------------------------

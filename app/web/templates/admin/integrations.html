@@ -51,6 +51,7 @@
       <p class="muted"><code>{instance}</code> is replaced by the server's Grafana instance as-is (use it with <code>=</code>); <code>{instance_re}</code> is the regex-escaped instance (use it inside <code>=~</code>). Clear a field to restore its default.</p>
       {% for key, q in grafana.queries.items() %}
       <label>{{ key }} <textarea name="q_{{ key }}" rows="3">{{ q }}</textarea></label>
+      {% if grafana.query_help[key] %}<p class="muted">{{ grafana.query_help[key] }}</p>{% endif %}
       {% endfor %}
     </fieldset>
     <div class="actions">

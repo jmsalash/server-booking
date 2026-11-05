@@ -16,7 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import clock
 from app.domain.rules import Rules
 from app.integrations.gcal import GoogleCalendarClient
-from app.integrations.grafana import DEFAULT_QUERIES, GrafanaClient, fetch_usage, redact
+from app.integrations.grafana import (
+    DEFAULT_QUERIES, GrafanaClient, discover_hosts, fetch_usage, redact, strip_port,
+)
 from app.jobs.metrics import HEALTH_KEY
 from app.models import AuditLog, Booking, OutboxItem, Server, TelegramTopic, User
 from app.services import audit, board, booking, inventory
@@ -33,7 +35,14 @@ TOPIC_POSTS = (
     ("reclaimed", "Reclaimed bookings"),
     ("freed", "Servers freed"),
 )
-QUERY_KEYS = ("cpu", "ram", "gpu_util", "gpu_mem")
+QUERY_KEYS = ("cpu", "ram", "gpu_util", "gpu_mem", "discover_hosts", "discover_gpus")
+QUERY_HELP = {
+    "discover_hosts": "Import from Grafana: one series per host, labelled instance (a :port "
+                      "suffix is dropped).",
+    "discover_gpus": "Import from Grafana: GPU count per host, labelled Hostname (matched to the "
+                     "instance case-insensitively, short name or FQDN).",
+}
+MAX_IMPORT_ROWS = 1000
 STATUSES = ("active", "cancelled", "reclaimed", "completed")
 KINDS = ("grafana", "standalone")
 LIST_LIMIT = 200
@@ -127,6 +136,7 @@ async def grafana_ctx(store: SettingsStore) -> dict:
         "ds_uid": ds_uid or "",
         "datasources": datasources,
         "queries": {k: saved.get(k, DEFAULT_QUERIES[k]) for k in QUERY_KEYS},
+        "query_help": QUERY_HELP,
     }
 
 
@@ -400,13 +410,17 @@ async def integrations_portal(
 # --- servers --------------------------------------------------------------------------------
 
 
+async def _grafana_ready(store: SettingsStore) -> bool:
+    return bool(await store.get(K.GRAFANA_URL) and await store.get(K.GRAFANA_DS_UID))
+
+
 async def _render_servers(
-    request: Request, db: AsyncSession, user: User, status: int = 200,
+    request: Request, db: AsyncSession, store: SettingsStore, user: User, status: int = 200,
     notice: str | None = None, fetched: dict | None = None,
 ) -> HTMLResponse:
     return render(request, "admin/servers.html", {
         "user": user, "section": "servers", "servers": await inventory.list_servers(db),
-        "notice": notice, "fetched": fetched,
+        "notice": notice, "fetched": fetched, "grafana_ready": await _grafana_ready(store),
     }, status)
 
 
@@ -479,9 +493,143 @@ async def _parse_server_form(
 
 @router.get("/servers")
 async def servers_page(
+    request: Request, user: User = Depends(admin_gate),
+    db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
+):
+    notice = None
+    added = _opt_int(request.query_params.get("added"))
+    if added is not None:
+        notice = f"Added {added} server{'' if added == 1 else 's'}."
+    return await _render_servers(request, db, store, user, notice=notice)
+
+
+# --- import from Grafana --------------------------------------------------------------------
+
+
+async def _existing_keys(db: AsyncSession) -> tuple[set[str], set[str]]:
+    """(lower-cased names, lower-cased host instances) of every server already added."""
+    names, instances = set(), set()
+    for s in await inventory.list_servers(db):
+        names.add(s.name.lower())
+        instances.add(strip_port(s.grafana_instance or s.hostname).lower())
+    return names, instances
+
+
+def _mark_existing(rows: list[dict], names: set[str], instances: set[str]) -> None:
+    for r in rows:
+        r["exists"] = (r["instance"].lower() in instances
+                       or (not r.get("selected") and r["name"].lower() in names))
+
+
+def _render_import(
+    request: Request, user: User, rows: list[dict] | None = None, *, configured: bool = True,
+    error: str | None = None, gpu_note: str | None = None, form_error: str | None = None,
+    status: int = 200,
+) -> HTMLResponse:
+    return render(request, "admin/servers_import.html", {
+        "user": user, "section": "servers", "configured": configured, "rows": rows,
+        "error": error, "gpu_note": gpu_note, "form_error": form_error,
+    }, status)
+
+
+@router.get("/servers/import")
+async def servers_import_page(
+    request: Request, user: User = Depends(admin_gate),
+    db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
+):
+    if not await _grafana_ready(store):
+        return _render_import(request, user, configured=False)
+    password = await store.get(K.GRAFANA_PASSWORD)
+    token = await store.get(K.GRAFANA_TOKEN)
+    client = request.app.state.grafana_factory(
+        await store.get(K.GRAFANA_URL), await store.get(K.GRAFANA_USER), password, token)
+    queries = {**DEFAULT_QUERIES, **(await store.get(K.GRAFANA_QUERIES) or {})}
+    try:
+        hosts = await discover_hosts(client, await store.get(K.GRAFANA_DS_UID), queries)
+    except Exception as e:  # noqa: BLE001 - shown to the admin
+        error = f"Grafana query failed — {describe_error(e, (password, token))}"
+        return _render_import(request, user, error=error)
+    rows = [{"instance": h.instance, "name": h.name, "gpu_count": h.gpu_count,
+             "shareable": False, "selected": False, "errors": []} for h in hosts]
+    _mark_existing(rows, *await _existing_keys(db))
+    gpu_note = None
+    if hosts.gpu_error is not None:
+        gpu_note = ("GPU count could not be read — set it by hand. "
+                    f"({describe_error(hosts.gpu_error, (password, token))})")
+    return _render_import(request, user, rows, gpu_note=gpu_note)
+
+
+def _is_zero(raw: str) -> bool:
+    try:
+        return int(raw) == 0
+    except ValueError:
+        return False
+
+
+def _import_rows(form) -> list[dict]:
+    rows = []
+    for i in range(MAX_IMPORT_ROWS):
+        if f"instance_{i}" not in form:
+            break
+        rows.append({
+            "instance": str(form.get(f"instance_{i}", "")).strip(),
+            "name": str(form.get(f"name_{i}", "")).strip(),
+            "gpu_count": str(form.get(f"gpu_count_{i}", "0")).strip() or "0",
+            "shareable": form.get(f"shareable_{i}") == "on",
+            "selected": form.get(f"selected_{i}") == "on",
+            "errors": [],
+        })
+    return rows
+
+
+@router.post("/servers/import")
+async def servers_import(
     request: Request, user: User = Depends(admin_gate), db: AsyncSession = Depends(get_db)
 ):
-    return await _render_servers(request, db, user)
+    rows = _import_rows(await request.form())
+    names, instances = await _existing_keys(db)
+    _mark_existing(rows, names, instances)
+    selected = [r for r in rows if r["selected"]]
+    if not selected:
+        for r in rows:
+            r["selected"] = False
+        return _render_import(request, user, rows, form_error="Tick at least one server to add.",
+                              status=400)
+    to_create = []
+    batch_names: set[str] = set()
+    batch_instances: set[str] = set()
+    for r in selected:
+        # Same validation as the manual form; has_gpu follows from the GPU count.
+        _, fields, errors = await _parse_server_form(db, {
+            "name": r["name"], "hostname": r["instance"], "kind": "grafana",
+            "grafana_instance": r["instance"], "has_gpu": "" if _is_zero(r["gpu_count"]) else "on",
+            "gpu_count": r["gpu_count"], "shareable": "on" if r["shareable"] else "",
+            "enabled": "on", "notes": "",
+        }, None)
+        key = r["instance"].lower()
+        if key and (key in instances or key in batch_instances):
+            errors.append(f"{r['instance']} is already added.")
+        if r["name"] and r["name"].lower() in batch_names:
+            errors.append(f"A server named “{r['name']}” already exists in this import.")
+        batch_names.add(r["name"].lower())
+        batch_instances.add(key)
+        r["errors"] = errors
+        to_create.append(fields)
+    if any(r["errors"] for r in selected):
+        return _render_import(request, user, rows, form_error="Nothing was added — fix the "
+                              "rows marked below.", status=400)
+    try:
+        async with db.begin_nested():
+            for fields in to_create:
+                await inventory.create_server(db, **fields)
+    except IntegrityError:
+        return _render_import(request, user, rows, form_error="Nothing was added — a server "
+                              "with one of these names already exists.", status=400)
+    created = [f["name"] for f in to_create]
+    await record(db, user, "servers_import", "servers", {
+        "names": created, "instances": [f["grafana_instance"] for f in to_create]})
+    await db.commit()
+    return redirect(f"/admin/servers?added={len(created)}")
 
 
 @router.get("/servers/new")
@@ -521,7 +669,7 @@ async def server_edit_page(
 @router.post("/servers/{server_id}")
 async def server_update(
     request: Request, server_id: int, user: User = Depends(admin_gate),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
 ):
     server = await db.get(Server, check_id(server_id))
     if server is None:
@@ -547,7 +695,7 @@ async def server_update(
         if remaining:
             noun = "booking remains" if remaining == 1 else "bookings remain"
             return await _render_servers(
-                request, db, user,
+                request, db, store, user,
                 notice=f"{server.name} disabled. {remaining} {noun} on this server.")
     return redirect("/admin/servers")
 
@@ -587,7 +735,7 @@ async def server_fetch(
             text = ", ".join(parts)
     await record(db, user, "fetch_usage", f"server:{server.id}", {"ok": ok})
     await db.commit()
-    return await _render_servers(request, db, user,
+    return await _render_servers(request, db, store, user,
                                  fetched={"server_id": server.id, "ok": ok, "text": text})
 
 

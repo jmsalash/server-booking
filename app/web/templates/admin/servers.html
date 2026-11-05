@@ -4,7 +4,11 @@
 <section class="panel">
   <h1>Servers</h1>
   {% if notice %}<div class="banner banner--warn">{{ notice }}</div>{% endif %}
-  <p><a class="button" href="/admin/servers/new">Add server</a></p>
+  <p class="actions">
+    <a class="button" href="/admin/servers/new">Add server</a>
+    {% if grafana_ready %}<a class="button" href="/admin/servers/import">Import from Grafana</a>
+    {% else %}<span class="muted">To import servers from Grafana, configure it on the <a href="/admin/integrations">Integrations</a> page.</span>{% endif %}
+  </p>
   {% if servers %}
   <table class="list">
     <thead><tr><th>Name</th><th>Hostname</th><th>Monitoring</th><th>GPUs</th><th>Shareable</th><th>Enabled</th><th></th></tr></thead>
