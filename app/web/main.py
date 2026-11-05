@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app import clock
 from app.crypto import SecretBox, load_or_create_key
 from app.db import make_engine, make_sessionmaker
-from app.services import setup
+from app.services import machine_identity, setup
 from app.settings_store import SettingsStore
 from app.web import admin, portal, setup_routes
 from app.web.deps import LoginRequired, make_login_signer, make_signer
@@ -71,6 +71,7 @@ def create_app(
     app.state.telegram_factory = setup_routes.default_telegram_factory
     app.state.grafana_factory = admin.default_grafana_factory
     app.state.calendar_factory = admin.default_calendar_factory
+    app.state.resolver = machine_identity.resolve  # DNS for the same-machine check
 
     @app.middleware("http")
     async def reject_foreign_origin(request: Request, call_next):

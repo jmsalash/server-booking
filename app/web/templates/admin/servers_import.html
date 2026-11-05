@@ -11,6 +11,7 @@
   <p class="muted">No hosts found. Check the <code>discover_hosts</code> query on the <a href="/admin/integrations">Integrations</a> page.</p>
   {% else %}
   {% if form_error %}<div class="banner banner--error">{{ form_error }}</div>{% endif %}
+  {% for n in notes %}<div class="banner banner--warn">{{ n }}</div>{% endfor %}
   {% if gpu_note %}<div class="banner banner--warn">{{ gpu_note }}</div>{% endif %}
   <p class="muted">Tick the hosts to add. They are added as Grafana-monitored, enabled servers; the GPU count comes from DCGM and can be corrected here.</p>
   <form method="post" action="/admin/servers/import" class="form">
@@ -24,7 +25,7 @@
         <td><input type="hidden" name="instance_{{ i }}" value="{{ r.instance }}">{{ r.instance }}</td>
         <td><input type="number" name="gpu_count_{{ i }}" value="{{ r.gpu_count }}" min="0" max="64" {% if r.exists %}readonly{% endif %}></td>
         <td><input type="checkbox" name="shareable_{{ i }}" aria-label="Shareable" {% if r.shareable %}checked{% endif %} {% if r.exists %}disabled{% endif %}></td>
-        <td>{% if r.exists %}<span class="muted">already added</span>{% endif %}</td>
+        <td>{% if r.exists %}<span class="muted">already added{% if r.existing %} as “{{ r.existing }}”{% endif %}</span>{% endif %}</td>
       </tr>
       {% for e in r.errors %}
       <tr><td colspan="6"><div class="banner banner--error">{{ r.instance }}: {{ e }}</div></td></tr>

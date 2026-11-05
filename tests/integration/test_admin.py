@@ -402,6 +402,99 @@ async def test_integrations_page_shows_and_saves_discovery_queries(client, logge
         "count by (instance) (up)")
 
 
+# --- duplicate machines (hostname / instance / IP) ---------------------------------------
+
+
+@pytest.fixture
+def dns(web_app):
+    table: dict[str, set[str]] = {}
+
+    async def resolve(name):
+        if name not in table:
+            raise OSError(f"no such host {name}")
+        return table[name]
+
+    web_app.state.resolver = resolve
+    return table
+
+
+async def test_create_rejects_same_machine_by_name(client, logged_in_admin, db, make_server, dns):
+    await make_server(name="gpu-01", hostname="gpu-01.lab")
+    await db.commit()
+    r = await client.post("/admin/servers/new", data={
+        **SERVER_FORM, "hostname": "other.lab", "grafana_instance": "GPU-01.LAB:9100"})
+    assert r.status_code == 400
+    assert "This machine already exists as &#34;gpu-01&#34;." in r.text
+    assert len((await db.scalars(select(Server))).all()) == 1
+
+
+async def test_create_rejects_same_machine_by_ip(client, logged_in_admin, db, make_server, dns):
+    await make_server(name="by-ip", hostname="10.0.0.5")
+    await db.commit()
+    dns["cpu-07.lab"] = {"10.0.0.5"}
+    r = await client.post("/admin/servers/new", data=SERVER_FORM)
+    assert r.status_code == 400 and "already exists as &#34;by-ip&#34;" in r.text
+    dns.clear()  # DNS failure: only names are compared, the save goes through
+    r = await client.post("/admin/servers/new", data=SERVER_FORM)
+    assert r.status_code == 303
+
+
+async def test_edit_not_flagged_against_itself_but_against_others(client, logged_in_admin, db,
+                                                                  make_server, dns):
+    s = await make_server(name="cpu-07", hostname="cpu-07.lab")
+    await make_server(name="alias", hostname="alias.lab")
+    await db.commit()
+    dns.update({"cpu-07.lab": {"10.0.0.7"}, "alias.lab": {"10.0.0.8"}})
+    r = await client.post(f"/admin/servers/{s.id}", data={**SERVER_FORM, "notes": "x"})
+    assert r.status_code == 303
+    dns["alias.lab"] = {"10.0.0.7"}
+    r = await client.post(f"/admin/servers/{s.id}", data={**SERVER_FORM, "notes": "y"})
+    assert r.status_code == 400 and "already exists as &#34;alias&#34;" in r.text
+
+
+async def test_import_tampered_instance_with_port_is_duplicate(client, logged_in_admin, db,
+                                                               make_server, dns):
+    await make_server(name="legacy", kind="grafana", grafana_instance="old-03:9100")
+    await db.commit()
+    r = await client.post("/admin/servers/import", data=_import_row(0, "old-03:9100", "fresh"))
+    assert r.status_code == 400 and "already exists as &#34;legacy&#34;" in r.text
+    r = await client.post("/admin/servers/import", data={
+        **_import_row(0, "a", "a1"), **_import_row(1, "a:9100", "a2")})
+    assert r.status_code == 400 and "already exists as &#34;a1&#34;" in r.text
+    db.expire_all()
+    assert len((await db.scalars(select(Server))).all()) == 1
+
+
+async def test_import_by_ip(client, logged_in_admin, db, store, make_server, grafana, dns):
+    await make_server(name="by-ip", hostname="10.0.0.5")
+    await _configure_grafana(db, store)
+    _discovered(grafana)
+    dns["cpu-02"] = {"10.0.0.5"}
+    r = await client.get("/admin/servers/import")
+    assert r.text.count("already added") == 1  # cpu-02 is by-ip
+    r = await client.post("/admin/servers/import", data=_import_row(0, "cpu-02"))
+    assert r.status_code == 400 and "already exists as &#34;by-ip&#34;" in r.text
+    assert "already added" in r.text
+
+
+async def test_import_page_caps_rows(client, logged_in_admin, db, store, grafana, monkeypatch):
+    monkeypatch.setattr("app.web.admin.MAX_IMPORT_ROWS", 2)
+    await _configure_grafana(db, store)
+    _discovered(grafana)
+    r = await client.get("/admin/servers/import")
+    assert "Showing the first 2 hosts" in r.text
+    assert 'name="instance_1"' in r.text and 'name="instance_2"' not in r.text
+
+
+async def test_added_notice_is_clamped(client, logged_in_admin):
+    r = await client.get("/admin/servers?added=999999999")
+    assert "Added" not in r.text
+    r = await client.get("/admin/servers?added=-3")
+    assert "Added" not in r.text
+    r = await client.get("/admin/servers?added=1")
+    assert "Added 1 server." in r.text
+
+
 # --- rules ----------------------------------------------------------------------------------
 
 

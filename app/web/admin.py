@@ -17,11 +17,12 @@ from app import clock
 from app.domain.rules import Rules
 from app.integrations.gcal import GoogleCalendarClient
 from app.integrations.grafana import (
-    DEFAULT_QUERIES, GrafanaClient, discover_hosts, fetch_usage, redact, strip_port,
+    DEFAULT_QUERIES, GrafanaClient, discover_hosts, fetch_usage, redact,
 )
 from app.jobs.metrics import HEALTH_KEY
 from app.models import AuditLog, Booking, OutboxItem, Server, TelegramTopic, User
 from app.services import audit, board, booking, inventory
+from app.services.machine_identity import MachineIndex, machine_keys
 from app.settings_store import K, SettingsStore
 from app.web.deps import current_user, get_db, get_store, require_admin, templates
 from app.web.portal import check_id
@@ -497,38 +498,63 @@ async def servers_page(
     db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
 ):
     notice = None
-    added = _opt_int(request.query_params.get("added"))
-    if added is not None:
+    raw = request.query_params.get("added", "")
+    if raw.isdigit() and 0 <= int(raw) <= MAX_IMPORT_ROWS:
+        added = int(raw)
         notice = f"Added {added} server{'' if added == 1 else 's'}."
     return await _render_servers(request, db, store, user, notice=notice)
+
+
+# --- same-machine check (manual form and import) --------------------------------------------
+
+
+def _duplicate_error(name: str) -> str:
+    return f'This machine already exists as "{name}".'
+
+
+async def _machine_index(
+    request: Request, db: AsyncSession, extra: list[set[str]]
+) -> MachineIndex:
+    """Index of every existing server; DNS for them and `extra` is resolved once, bounded."""
+    index = MachineIndex(request.app.state.resolver)
+    await index.load([(s.id, s.name, machine_keys(s.hostname, s.grafana_instance))
+                      for s in await inventory.list_servers(db)], extra)
+    return index
+
+
+async def _check_same_machine(
+    request: Request, db: AsyncSession, fields: dict, errors: list[str], server_id: int | None
+) -> None:
+    keys = machine_keys(fields["hostname"], fields["grafana_instance"])
+    if not keys:
+        return
+    index = await _machine_index(request, db, [keys])
+    if (other := index.find(keys, exclude_id=server_id)) is not None:
+        errors.append(_duplicate_error(other))
 
 
 # --- import from Grafana --------------------------------------------------------------------
 
 
-async def _existing_keys(db: AsyncSession) -> tuple[set[str], set[str]]:
-    """(lower-cased names, lower-cased host instances) of every server already added."""
-    names, instances = set(), set()
-    for s in await inventory.list_servers(db):
-        names.add(s.name.lower())
-        instances.add(strip_port(s.grafana_instance or s.hostname).lower())
-    return names, instances
-
-
-def _mark_existing(rows: list[dict], names: set[str], instances: set[str]) -> None:
+async def _mark_existing(request: Request, db: AsyncSession, rows: list[dict]) -> MachineIndex:
+    """Flag rows that are already a server (same machine, or — when not ticked — same name)."""
+    index = await _machine_index(request, db, [machine_keys(r["instance"]) for r in rows])
+    names = {s.name.lower() for s in await inventory.list_servers(db)}
     for r in rows:
-        r["exists"] = (r["instance"].lower() in instances
+        r["existing"] = index.find(machine_keys(r["instance"]))
+        r["exists"] = (r["existing"] is not None
                        or (not r.get("selected") and r["name"].lower() in names))
+    return index
 
 
 def _render_import(
     request: Request, user: User, rows: list[dict] | None = None, *, configured: bool = True,
     error: str | None = None, gpu_note: str | None = None, form_error: str | None = None,
-    status: int = 200,
+    notes: list[str] | None = None, status: int = 200,
 ) -> HTMLResponse:
     return render(request, "admin/servers_import.html", {
         "user": user, "section": "servers", "configured": configured, "rows": rows,
-        "error": error, "gpu_note": gpu_note, "form_error": form_error,
+        "error": error, "gpu_note": gpu_note, "form_error": form_error, "notes": notes or [],
     }, status)
 
 
@@ -549,14 +575,19 @@ async def servers_import_page(
     except Exception as e:  # noqa: BLE001 - shown to the admin
         error = f"Grafana query failed — {describe_error(e, (password, token))}"
         return _render_import(request, user, error=error)
+    notes = []
+    if len(hosts) > MAX_IMPORT_ROWS:
+        notes.append(f"Grafana returned {len(hosts)} hosts. Showing the first "
+                     f"{MAX_IMPORT_ROWS} hosts; import them, then reload for the rest.")
     rows = [{"instance": h.instance, "name": h.name, "gpu_count": h.gpu_count,
-             "shareable": False, "selected": False, "errors": []} for h in hosts]
-    _mark_existing(rows, *await _existing_keys(db))
+             "shareable": False, "selected": False, "errors": []}
+            for h in hosts[:MAX_IMPORT_ROWS]]
+    await _mark_existing(request, db, rows)
     gpu_note = None
     if hosts.gpu_error is not None:
         gpu_note = ("GPU count could not be read — set it by hand. "
                     f"({describe_error(hosts.gpu_error, (password, token))})")
-    return _render_import(request, user, rows, gpu_note=gpu_note)
+    return _render_import(request, user, rows, gpu_note=gpu_note, notes=notes)
 
 
 def _is_zero(raw: str) -> bool:
@@ -587,8 +618,7 @@ async def servers_import(
     request: Request, user: User = Depends(admin_gate), db: AsyncSession = Depends(get_db)
 ):
     rows = _import_rows(await request.form())
-    names, instances = await _existing_keys(db)
-    _mark_existing(rows, names, instances)
+    index = await _mark_existing(request, db, rows)
     selected = [r for r in rows if r["selected"]]
     if not selected:
         for r in rows:
@@ -597,7 +627,6 @@ async def servers_import(
                               status=400)
     to_create = []
     batch_names: set[str] = set()
-    batch_instances: set[str] = set()
     for r in selected:
         # Same validation as the manual form; has_gpu follows from the GPU count.
         _, fields, errors = await _parse_server_form(db, {
@@ -606,13 +635,14 @@ async def servers_import(
             "gpu_count": r["gpu_count"], "shareable": "on" if r["shareable"] else "",
             "enabled": "on", "notes": "",
         }, None)
-        key = r["instance"].lower()
-        if key and (key in instances or key in batch_instances):
-            errors.append(f"{r['instance']} is already added.")
+        # Existing servers and rows accepted earlier in this batch (port/case/IP-aware).
+        keys = machine_keys(r["instance"])
+        if keys and (other := index.find(keys)) is not None:
+            errors.append(_duplicate_error(other))
         if r["name"] and r["name"].lower() in batch_names:
             errors.append(f"A server named “{r['name']}” already exists in this import.")
         batch_names.add(r["name"].lower())
-        batch_instances.add(key)
+        index.add(r["name"] or r["instance"], keys)
         r["errors"] = errors
         to_create.append(fields)
     if any(r["errors"] for r in selected):
@@ -642,6 +672,7 @@ async def server_create(
     request: Request, user: User = Depends(admin_gate), db: AsyncSession = Depends(get_db)
 ):
     values, fields, errors = await _parse_server_form(db, await request.form(), None)
+    await _check_same_machine(request, db, fields, errors, None)
     if errors:
         return _render_server_edit(request, user, None, values, errors, 400)
     try:
@@ -675,6 +706,7 @@ async def server_update(
     if server is None:
         raise LookupError(f"server {server_id} not found")
     values, fields, errors = await _parse_server_form(db, await request.form(), server.id)
+    await _check_same_machine(request, db, fields, errors, server.id)
     if errors:
         return _render_server_edit(request, user, server.id, values, errors, 400)
     was_enabled = server.enabled

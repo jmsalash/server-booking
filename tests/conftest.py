@@ -72,9 +72,15 @@ async def store(db, box):
     return SettingsStore(db, box)
 
 
+async def _no_dns(name):
+    raise OSError(f"DNS disabled in tests ({name})")
+
+
 @pytest.fixture
 def web_app(sessionmaker, tmp_path):
-    return create_app(sessionmaker, data_dir=tmp_path)
+    app = create_app(sessionmaker, data_dir=tmp_path)
+    app.state.resolver = _no_dns  # tests never hit real DNS; override per test
+    return app
 
 
 @pytest_asyncio.fixture
