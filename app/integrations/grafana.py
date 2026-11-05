@@ -10,23 +10,49 @@ from app.domain.types import GpuUsage, ServerUsage
 
 # Defaults target node_exporter (CPU/RAM, hosts) + utkuozdemir/nvidia_gpu_exporter (GPUs,
 # labelled `instance` like node_exporter). Its *_ratio metrics are 0-1, hence the 100 *.
+# Instance matchers are case-insensitive and accept a domain suffix and a :port, so a server
+# stored as "gpu-01" matches instance="GPU-01.lab:9100". The PromQL text holds `\\.` (a
+# double-quoted PromQL string), so the regex engine sees `\.`.
+_INST = r'instance=~"(?i){instance_re}(\\.[^:]*)?(:.*)?"'
 DEFAULT_QUERIES: dict[str, str] = {
-    "cpu": '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle",instance=~"{instance_re}(:.*)?"}[5m])))',
-    "ram": '100 * (1 - node_memory_MemAvailable_bytes{instance=~"{instance_re}(:.*)?"} / node_memory_MemTotal_bytes{instance=~"{instance_re}(:.*)?"})',
-    "gpu_util": '100 * nvidia_smi_utilization_gpu_ratio{instance=~"{instance_re}(:.*)?"}',
-    "gpu_mem": '100 * nvidia_smi_memory_used_bytes{instance=~"{instance_re}(:.*)?"} / nvidia_smi_memory_total_bytes{instance=~"{instance_re}(:.*)?"}',
+    "cpu": '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle",' + _INST + '}[5m])))',
+    "ram": ('100 * (1 - node_memory_MemAvailable_bytes{' + _INST + '}'
+            ' / node_memory_MemTotal_bytes{' + _INST + '})'),
+    "gpu_util": '100 * nvidia_smi_utilization_gpu_ratio{' + _INST + '}',
+    "gpu_mem": ('100 * nvidia_smi_memory_used_bytes{' + _INST + '}'
+                ' / nvidia_smi_memory_total_bytes{' + _INST + '}'),
     # Discovery ("Import from Grafana"): one series per host, labelled `instance` / `Hostname`.
     "discover_hosts": 'count by (instance) (node_cpu_seconds_total{mode="idle"})',
     "discover_gpus": 'count by (instance) (nvidia_smi_utilization_gpu_ratio)',
 }
 
-# Earlier defaults (NVIDIA DCGM exporter, labelled `Hostname`). Installs that saved the
-# integrations form stored these verbatim; effective_queries() treats them as unset.
-LEGACY_DEFAULT_QUERIES: dict[str, str] = {
+# The NVIDIA DCGM exporter alternative (labelled `Hostname`); the GPU defaults of earlier
+# versions, shown in the integrations help.
+DCGM_QUERIES: dict[str, str] = {
     "gpu_util": 'DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}',
     "gpu_mem": '100 * DCGM_FI_DEV_FB_USED{Hostname="{instance}"} / (DCGM_FI_DEV_FB_USED{Hostname="{instance}"} + DCGM_FI_DEV_FB_FREE{Hostname="{instance}"})',
     "discover_gpus": 'count by (Hostname) (DCGM_FI_DEV_GPU_UTIL)',
 }
+
+# Every earlier default, verbatim. Installs that saved the integrations form stored them as-is;
+# effective_queries() treats them as unset so those installs follow the current defaults.
+LEGACY_DEFAULT_QUERIES: dict[str, tuple[str, ...]] = {
+    "cpu": ('100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle",instance=~"{instance_re}(:.*)?"}[5m])))',),
+    "ram": ('100 * (1 - node_memory_MemAvailable_bytes{instance=~"{instance_re}(:.*)?"} / node_memory_MemTotal_bytes{instance=~"{instance_re}(:.*)?"})',),
+    "gpu_util": (
+        DCGM_QUERIES["gpu_util"],
+        '100 * nvidia_smi_utilization_gpu_ratio{instance=~"{instance_re}(:.*)?"}',
+    ),
+    "gpu_mem": (
+        DCGM_QUERIES["gpu_mem"],
+        '100 * nvidia_smi_memory_used_bytes{instance=~"{instance_re}(:.*)?"} / nvidia_smi_memory_total_bytes{instance=~"{instance_re}(:.*)?"}',
+    ),
+    "discover_gpus": (DCGM_QUERIES["discover_gpus"],),
+}
+
+
+def is_legacy_default(key: str, value: str) -> bool:
+    return value in LEGACY_DEFAULT_QUERIES.get(key, ())
 
 
 def effective_queries(saved: dict | None) -> dict[str, str]:
@@ -37,7 +63,7 @@ def effective_queries(saved: dict | None) -> dict[str, str]:
     """
     out = dict(DEFAULT_QUERIES)
     for k, v in (saved or {}).items():
-        if not v or LEGACY_DEFAULT_QUERIES.get(k) == v:
+        if not v or is_legacy_default(k, v):
             continue
         out[k] = v
     return out

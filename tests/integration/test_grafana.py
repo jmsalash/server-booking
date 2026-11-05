@@ -1,4 +1,5 @@
 import base64
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -6,7 +7,7 @@ import pytest
 import respx
 
 from app.integrations.grafana import (
-    DEFAULT_QUERIES, LEGACY_DEFAULT_QUERIES, DiscoveredHost, GrafanaClient, GrafanaError,
+    DCGM_QUERIES, DEFAULT_QUERIES, LEGACY_DEFAULT_QUERIES, DiscoveredHost, GrafanaClient, GrafanaError,
     MetricsUnavailable, Series, _expand, _gpu_key, discover_hosts, effective_queries, fetch_usage,
 )
 
@@ -144,9 +145,9 @@ async def test_instance_regex_escaped_only_in_regex_matchers():
         await fetch_usage(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES, "a.b", 1, NOW)
     cpu = next(e for e in seen if "node_cpu" in e)
     util = next(e for e in seen if "nvidia_smi_utilization_gpu_ratio" in e)
-    assert 'instance=~"a\\\\.b(:.*)?"' in cpu
-    assert util == '100 * nvidia_smi_utilization_gpu_ratio{instance=~"a\\\\.b(:.*)?"}'
-    assert _expand(LEGACY_DEFAULT_QUERIES["gpu_util"], "a.b") == 'DCGM_FI_DEV_GPU_UTIL{Hostname="a.b"}'
+    assert 'instance=~"(?i)a\\\\.b(\\\\.[^:]*)?(:.*)?"' in cpu
+    assert util == r'100 * nvidia_smi_utilization_gpu_ratio{instance=~"(?i)a\\.b(\\.[^:]*)?(:.*)?"}'
+    assert _expand(DCGM_QUERIES["gpu_util"], "a.b") == 'DCGM_FI_DEV_GPU_UTIL{Hostname="a.b"}'
 
 
 # --- discovery ------------------------------------------------------------------------------
@@ -250,24 +251,51 @@ async def test_discover_hosts_error_propagates():
 
 
 def test_default_gpu_queries_target_nvidia_gpu_exporter():
-    assert DEFAULT_QUERIES["gpu_util"] == (
-        '100 * nvidia_smi_utilization_gpu_ratio{instance=~"{instance_re}(:.*)?"}')
+    inst = r'instance=~"(?i){instance_re}(\\.[^:]*)?(:.*)?"'
+    assert DEFAULT_QUERIES["gpu_util"] == '100 * nvidia_smi_utilization_gpu_ratio{' + inst + '}'
     assert DEFAULT_QUERIES["gpu_mem"] == (
-        '100 * nvidia_smi_memory_used_bytes{instance=~"{instance_re}(:.*)?"}'
-        ' / nvidia_smi_memory_total_bytes{instance=~"{instance_re}(:.*)?"}')
-    assert set(LEGACY_DEFAULT_QUERIES) == {"gpu_util", "gpu_mem", "discover_gpus"}
-    assert LEGACY_DEFAULT_QUERIES["gpu_util"] == 'DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}'
+        '100 * nvidia_smi_memory_used_bytes{' + inst + '}'
+        ' / nvidia_smi_memory_total_bytes{' + inst + '}')
+    assert DCGM_QUERIES["gpu_util"] == 'DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}'
+    assert DCGM_QUERIES["discover_gpus"] == 'count by (Hostname) (DCGM_FI_DEV_GPU_UTIL)'
+
+
+def test_instance_matchers_are_case_insensitive_and_domain_tolerant():
+    for k in ("cpu", "ram", "gpu_util", "gpu_mem"):
+        assert "(?i){instance_re}" in DEFAULT_QUERIES[k], k
+        q = _expand(DEFAULT_QUERIES[k], "rvp01-Cocaina")
+        # PromQL text: the instance keeps its case, regex chars and the backslash are doubled.
+        assert r'instance=~"(?i)rvp01\\-Cocaina(\\.[^:]*)?(:.*)?"' in q, q
+        assert "rvp01-cocaina" not in q
+    # What the regex engine sees after PromQL string unescaping (\\ -> \), fully anchored.
+    regex = r"(?i)rvp01\-Cocaina(\.[^:]*)?(:.*)?"
+    for label in ("rvp01-cocaina:9835", "RVP01-COCAINA.lab.local:9100", "rvp01-Cocaina"):
+        assert re.fullmatch(regex, label), label
+    for label in ("rvp01-cocainax:9100", "x-rvp01-cocaina:9100"):
+        assert not re.fullmatch(regex, label), label
+
+
+def _legacy_saved(i=0):
+    return {k: v[min(i, len(v) - 1)] for k, v in LEGACY_DEFAULT_QUERIES.items()}
+
+
+def test_legacy_defaults_cover_every_previous_form():
+    assert set(LEGACY_DEFAULT_QUERIES) == {"cpu", "ram", "gpu_util", "gpu_mem", "discover_gpus"}
+    assert DCGM_QUERIES["gpu_util"] in LEGACY_DEFAULT_QUERIES["gpu_util"]
+    assert ('100 * nvidia_smi_utilization_gpu_ratio{instance=~"{instance_re}(:.*)?"}'
+            in LEGACY_DEFAULT_QUERIES["gpu_util"])
+    assert all("(?i)" not in v for vs in LEGACY_DEFAULT_QUERIES.values() for v in vs)
 
 
 def test_effective_queries_treats_legacy_defaults_as_unset():
-    q = effective_queries(dict(LEGACY_DEFAULT_QUERIES))
-    assert q == DEFAULT_QUERIES
+    assert effective_queries(_legacy_saved(0)) == DEFAULT_QUERIES  # DCGM + old cpu/ram
+    assert effective_queries(_legacy_saved(1)) == DEFAULT_QUERIES  # case-sensitive nvidia
 
 
 def test_effective_queries_keeps_customised_values():
     custom = 'DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}",gpu!=""}'
     q = effective_queries({"gpu_util": custom, "cpu": "my_cpu", "ram": "",
-                           "gpu_mem": LEGACY_DEFAULT_QUERIES["gpu_mem"]})
+                           "gpu_mem": DCGM_QUERIES["gpu_mem"]})
     assert q["gpu_util"] == custom and q["cpu"] == "my_cpu"
     assert q["ram"] == DEFAULT_QUERIES["ram"] and q["gpu_mem"] == DEFAULT_QUERIES["gpu_mem"]
     assert effective_queries(None) == DEFAULT_QUERIES
@@ -313,3 +341,11 @@ async def test_discover_mixes_hostname_and_instance_labels():
         (GPUS_Q, [frame(8, {"Hostname": "a"}), frame(2, {"instance": "b:9835"})]),
     ])
     assert {h.instance: h.gpu_count for h in hosts} == {"a": 8, "b": 2}
+
+
+async def test_discover_instance_label_case_mismatch_keeps_host_case():
+    hosts = await _discover([
+        (HOSTS_Q, [frame(1, {"instance": "rvp01-Cocaina:9100"})]),
+        (GPUS_Q, [frame(2, {"instance": "rvp01-cocaina.lab:9835"})]),
+    ])
+    assert list(hosts) == [DiscoveredHost("rvp01-Cocaina", "rvp01-Cocaina", 2)]

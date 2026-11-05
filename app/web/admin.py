@@ -17,8 +17,8 @@ from app import clock
 from app.domain.rules import Rules
 from app.integrations.gcal import GoogleCalendarClient
 from app.integrations.grafana import (
-    DEFAULT_QUERIES, LEGACY_DEFAULT_QUERIES, GrafanaClient, discover_hosts, effective_queries,
-    fetch_usage, redact,
+    DCGM_QUERIES, DEFAULT_QUERIES, GrafanaClient, discover_hosts, effective_queries, fetch_usage,
+    is_legacy_default, redact,
 )
 from app.jobs.metrics import HEALTH_KEY
 from app.models import AuditLog, Booking, OutboxItem, Server, TelegramTopic, User
@@ -140,7 +140,7 @@ async def grafana_ctx(store: SettingsStore) -> dict:
         "datasources": datasources,
         "queries": {k: queries[k] for k in QUERY_KEYS},
         "query_help": QUERY_HELP,
-        "dcgm_queries": LEGACY_DEFAULT_QUERIES,
+        "dcgm_queries": DCGM_QUERIES,
     }
 
 
@@ -174,7 +174,7 @@ async def handle_grafana_post(
     queries = {}
     for k in QUERY_KEYS:
         q = str(form.get(f"q_{k}", "")).replace("\r\n", "\n").strip()
-        if q and q != DEFAULT_QUERIES[k] and q != LEGACY_DEFAULT_QUERIES.get(k):
+        if q and q != DEFAULT_QUERIES[k] and not is_legacy_default(k, q):
             queries[k] = q
     if url and not valid_http_url(url):
         return ("The Grafana URL must start with http:// or https:// and must not contain "

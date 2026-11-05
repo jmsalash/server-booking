@@ -57,8 +57,10 @@ The web UI listens on port 8000. The only configuration is `DATABASE_URL`
    preferred; user/password also works), press Test, then choose the datasource.
    The default PromQL query templates target node_exporter (CPU, RAM, host
    discovery) and [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter)
-   (GPUs, e.g. `100 * nvidia_smi_utilization_gpu_ratio{instance=~"{instance_re}(:.*)?"}`;
-   its `*_ratio` metrics are 0-1, hence the `100 *`). Adjust them to your labels:
+   (GPUs, e.g. `100 * nvidia_smi_utilization_gpu_ratio{instance=~"(?i){instance_re}(\\.[^:]*)?(:.*)?"}`;
+   its `*_ratio` metrics are 0-1, hence the `100 *`). The instance matchers are
+   case-insensitive and accept a domain suffix and a port, so a server stored as
+   `gpu-01` matches `instance="GPU-01.lab:9100"`. Adjust them to your labels:
    - `{instance}` is replaced by the server's exact instance/hostname value
      (used with `=`, e.g. `DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}`).
    - `{instance_re}` is the regex-escaped value for `=~` matchers (e.g.
@@ -70,8 +72,9 @@ The web UI listens on port 8000. The only configuration is `DATABASE_URL`
    - gpu_mem: `100 * DCGM_FI_DEV_FB_USED{Hostname="{instance}"} / (DCGM_FI_DEV_FB_USED{Hostname="{instance}"} + DCGM_FI_DEV_FB_FREE{Hostname="{instance}"})`
    - discover_gpus: `count by (Hostname) (DCGM_FI_DEV_GPU_UTIL)`
 
-   Saved queries that are exactly those old DCGM defaults are treated as unset
-   and replaced by the nvidia_gpu_exporter defaults. To keep using DCGM, save a
+   Saved queries that are exactly a default of an earlier version (these DCGM
+   queries, or the older case-sensitive `instance=~"{instance_re}(:.*)?"` forms)
+   are treated as unset and replaced by the current defaults. To keep using DCGM, save a
    slightly different query (e.g. add `,gpu!=""` inside the braces:
    `DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}",gpu!=""}`).
 

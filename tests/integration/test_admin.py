@@ -405,7 +405,8 @@ async def test_integrations_page_shows_and_saves_discovery_queries(client, logge
 async def test_integrations_migrates_stored_legacy_dcgm_defaults(client, logged_in_admin, db,
                                                                  store, grafana):
     from app.integrations.grafana import DEFAULT_QUERIES, LEGACY_DEFAULT_QUERIES
-    await store.set(K.GRAFANA_QUERIES, {**LEGACY_DEFAULT_QUERIES, "cpu": "my_cpu"})
+    legacy = {k: v[0] for k, v in LEGACY_DEFAULT_QUERIES.items()}
+    await store.set(K.GRAFANA_QUERIES, {**legacy, "cpu": "my_cpu"})
     await db.commit()
     r = await client.get("/admin/integrations")
     assert 'name="q_gpu_util" rows="3">100 * nvidia_smi_utilization_gpu_ratio{' in r.text
@@ -414,7 +415,7 @@ async def test_integrations_migrates_stored_legacy_dcgm_defaults(client, logged_
     assert "nvidia_gpu_exporter" in r.text and "DCGM_FI_DEV_FB_FREE" in r.text  # help text
     # Re-saving the form with the old DCGM text does not store it as an override.
     await client.post("/admin/integrations/grafana", data={
-        **GRAFANA_FORM, "q_cpu": "my_cpu", **{f"q_{k}": v for k, v in LEGACY_DEFAULT_QUERIES.items()},
+        **GRAFANA_FORM, "q_cpu": "my_cpu", **{f"q_{k}": v for k, v in legacy.items() if k != "cpu"},
         "q_gpu_mem": DEFAULT_QUERIES["gpu_mem"]})
     assert await fresh(db, store, K.GRAFANA_QUERIES) == {"cpu": "my_cpu"}
 

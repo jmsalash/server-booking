@@ -173,7 +173,8 @@ async def test_poll_keeps_last_ok_at(db, store, make_server):
 async def test_poll_uses_new_gpu_defaults_over_stored_legacy_dcgm(db, store, make_server):
     from app.integrations.grafana import LEGACY_DEFAULT_QUERIES
     await configure(store)
-    await store.set(K.GRAFANA_QUERIES, dict(LEGACY_DEFAULT_QUERIES))  # saved verbatim by old form
+    # saved verbatim by the old form: DCGM GPU queries, case-sensitive cpu/ram
+    await store.set(K.GRAFANA_QUERIES, {k: v[0] for k, v in LEGACY_DEFAULT_QUERIES.items()})
     s = await make_server(name="g", kind="grafana", grafana_instance="g-host",
                             has_gpu=True, gpu_count=1)
     seen = []
@@ -188,4 +189,5 @@ async def test_poll_uses_new_gpu_defaults_over_stored_legacy_dcgm(db, store, mak
     assert res.ok == 1, res.failed
     assert not any("DCGM" in e for e in seen)
     assert any(e.startswith("100 * nvidia_smi_utilization_gpu_ratio") for e in seen)
+    assert all(r"(?i)g\\-host" in e for e in seen)  # PromQL text: g\\-host
     assert len((await usage.latest(db, s.id)).gpus) == 1
