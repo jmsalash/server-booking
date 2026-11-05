@@ -7,7 +7,7 @@ import pytest
 import respx
 
 from app.integrations.grafana import (
-    DCGM_QUERIES, DEFAULT_QUERIES, LEGACY_DEFAULT_QUERIES, DiscoveredHost, GrafanaClient, GrafanaError,
+    DEFAULT_QUERIES, LEGACY_DEFAULT_QUERIES, NVIDIA_SMI_QUERIES, DiscoveredHost, GrafanaClient, GrafanaError,
     MetricsUnavailable, Series, _expand, _gpu_key, discover_hosts, effective_queries, fetch_usage,
 )
 
@@ -60,8 +60,8 @@ async def test_fetch_usage_parses_frames():
     mapping = [
         ("node_cpu_seconds_total", [frame(12.5)]),
         ("node_memory_MemAvailable_bytes", [frame(40.0)]),
-        ("memory_used_bytes", [frame(30.0, {"gpu": "1"}), frame(10.0, {"gpu": "0"})]),
-        ("utilization_gpu_ratio", [frame(90.0, {"gpu": "1"}), frame(5.0, {"gpu": "0"})]),
+        ("DCGM_FI_DEV_FB_USED", [frame(30.0, {"gpu": "1"}), frame(10.0, {"gpu": "0"})]),
+        ("DCGM_FI_DEV_GPU_UTIL", [frame(90.0, {"gpu": "1"}), frame(5.0, {"gpu": "0"})]),
     ]
     with respx.mock:
         respx.post(f"{BASE}/api/ds/query").mock(side_effect=by_query(mapping))
@@ -82,8 +82,8 @@ async def test_gpu_series_count_mismatch_unavailable():
     mapping = [
         ("node_cpu_seconds_total", [frame(1.0)]),
         ("node_memory_MemAvailable_bytes", [frame(2.0)]),
-        ("memory_used_bytes", [frame(30.0, {"gpu": "0"})]),
-        ("utilization_gpu_ratio", [frame(5.0, {"gpu": "0"})]),
+        ("DCGM_FI_DEV_FB_USED", [frame(30.0, {"gpu": "0"})]),
+        ("DCGM_FI_DEV_GPU_UTIL", [frame(5.0, {"gpu": "0"})]),
     ]
     with respx.mock:
         respx.post(f"{BASE}/api/ds/query").mock(side_effect=by_query(mapping))
@@ -123,8 +123,8 @@ async def test_duplicate_gpu_labels_unavailable():
     mapping = [
         ("node_cpu_seconds_total", [frame(1.0)]),
         ("node_memory_MemAvailable_bytes", [frame(2.0)]),
-        ("memory_used_bytes", [frame(30.0, {"gpu": "0"}), frame(31.0, {"gpu": "0"})]),
-        ("utilization_gpu_ratio", [frame(5.0, {"gpu": "0"}), frame(6.0, {"gpu": "1"})]),
+        ("DCGM_FI_DEV_FB_USED", [frame(30.0, {"gpu": "0"}), frame(31.0, {"gpu": "0"})]),
+        ("DCGM_FI_DEV_GPU_UTIL", [frame(5.0, {"gpu": "0"}), frame(6.0, {"gpu": "1"})]),
     ]
     with respx.mock:
         respx.post(f"{BASE}/api/ds/query").mock(side_effect=by_query(mapping))
@@ -144,16 +144,15 @@ async def test_instance_regex_escaped_only_in_regex_matchers():
         respx.post(f"{BASE}/api/ds/query").mock(side_effect=side)
         await fetch_usage(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES, "a.b", 1, NOW)
     cpu = next(e for e in seen if "node_cpu" in e)
-    util = next(e for e in seen if "nvidia_smi_utilization_gpu_ratio" in e)
+    util = next(e for e in seen if "GPU_UTIL" in e)
     assert 'instance=~"(?i)a\\\\.b(\\\\.[^:]*)?(:.*)?"' in cpu
-    assert util == r'100 * nvidia_smi_utilization_gpu_ratio{instance=~"(?i)a\\.b(\\.[^:]*)?(:.*)?"}'
-    assert _expand(DCGM_QUERIES["gpu_util"], "a.b") == 'DCGM_FI_DEV_GPU_UTIL{Hostname="a.b"}'
+    assert util == r'DCGM_FI_DEV_GPU_UTIL{instance=~"(?i)a\\.b(\\.[^:]*)?(:.*)?"}'
 
 
 # --- discovery ------------------------------------------------------------------------------
 
 HOSTS_Q = "node_cpu_seconds_total"
-GPUS_Q = "nvidia_smi_utilization_gpu_ratio"
+GPUS_Q = "DCGM_FI_DEV_GPU_UTIL"
 
 
 async def _discover(mapping, gpu_status=200):
@@ -176,13 +175,13 @@ def test_discovery_queries_have_defaults():
     assert DEFAULT_QUERIES["discover_hosts"] == (
         'count by (instance) (node_cpu_seconds_total{mode="idle"})')
     assert DEFAULT_QUERIES["discover_gpus"] == (
-        'count by (instance) (nvidia_smi_utilization_gpu_ratio)')
+        'count by (instance) (DCGM_FI_DEV_GPU_UTIL)')
 
 
 async def test_discover_strips_port_and_reads_gpu_count():
     hosts = await _discover([
         (HOSTS_Q, [frame(32, {"instance": "gpu-01:9100"}), frame(8, {"instance": "cpu-02:9100"})]),
-        (GPUS_Q, [frame(4, {"Hostname": "gpu-01"})]),
+        (GPUS_Q, [frame(4, {"instance": "gpu-01"})]),
     ])
     assert list(hosts) == [DiscoveredHost("cpu-02", "cpu-02", 0),
                            DiscoveredHost("gpu-01", "gpu-01", 4)]
@@ -194,9 +193,9 @@ async def test_discover_gpu_match_case_insensitive_and_short_vs_fqdn():
         (HOSTS_Q, [frame(1, {"instance": "GPU-01.lab.local:9100"}),
                    frame(1, {"instance": "gpu-02:9100"}),
                    frame(1, {"instance": "gpu-03.lab:9100"})]),
-        (GPUS_Q, [frame(2, {"Hostname": "gpu-01"}),
-                  frame(8, {"Hostname": "GPU-02.lab.local"}),
-                  frame(1, {"Hostname": "gpu-03.LAB"})]),
+        (GPUS_Q, [frame(2, {"instance": "gpu-01"}),
+                  frame(8, {"instance": "GPU-02.lab.local"}),
+                  frame(1, {"instance": "gpu-03.LAB:9400"})]),
     ])
     assert {h.instance: h.gpu_count for h in hosts} == {
         "GPU-01.lab.local": 2, "gpu-02": 8, "gpu-03.lab": 1}
@@ -205,7 +204,7 @@ async def test_discover_gpu_match_case_insensitive_and_short_vs_fqdn():
 async def test_discover_ip_instances_do_not_match_by_first_label():
     hosts = await _discover([
         (HOSTS_Q, [frame(1, {"instance": "10.0.0.5:9100"})]),
-        (GPUS_Q, [frame(2, {"Hostname": "10"}), frame(4, {"Hostname": "10.0.0.6"})]),
+        (GPUS_Q, [frame(2, {"instance": "10"}), frame(4, {"instance": "10.0.0.6"})]),
     ])
     assert list(hosts) == [DiscoveredHost("10.0.0.5", "10.0.0.5", 0)]
 
@@ -231,11 +230,11 @@ async def test_discover_nothing_returns_empty_list():
 
 
 async def test_discover_ignores_garbage_gpu_values():
-    bad = {"schema": {"fields": [{"name": "Time"}, {"name": "Value", "labels": {"Hostname": "g"}}]},
+    bad = {"schema": {"fields": [{"name": "Time"}, {"name": "Value", "labels": {"instance": "g"}}]},
            "data": {"values": [[1], ["NaN"]]}}
     hosts = await _discover([
         (HOSTS_Q, [frame(1, {"instance": "g:9100"}), frame(1, {"instance": "h:9100"})]),
-        (GPUS_Q, [bad, frame(-3, {"Hostname": "h"})]),
+        (GPUS_Q, [bad, frame(-3, {"instance": "h"})]),
     ])
     assert {h.instance: h.gpu_count for h in hosts} == {"g": 0, "h": 0}
 
@@ -247,17 +246,46 @@ async def test_discover_hosts_error_propagates():
             await discover_hosts(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES)
 
 
-# --- nvidia_gpu_exporter defaults / legacy DCGM migration -----------------------------------
+# --- DCGM defaults / legacy migration -------------------------------------------------------
+
+INST = r'instance=~"(?i){instance_re}(\\.[^:]*)?(:.*)?"'
+# Real DCGM exporter series labels (the `hostname` label is a container id).
+DCGM_LABELS = {"UUID": "GPU-1234", "device": "nvidia0", "gpu": "0", "hostname": "3e6b14aa0faf",
+               "instance": "rvp01-Cocaina", "job": "dcgm", "machine": "rvp01-Cocaina",
+               "modelName": "NVIDIA GeForce RTX 5090"}
 
 
-def test_default_gpu_queries_target_nvidia_gpu_exporter():
-    inst = r'instance=~"(?i){instance_re}(\\.[^:]*)?(:.*)?"'
-    assert DEFAULT_QUERIES["gpu_util"] == '100 * nvidia_smi_utilization_gpu_ratio{' + inst + '}'
+def test_default_gpu_queries_target_dcgm_exporter():
+    assert DEFAULT_QUERIES["gpu_util"] == 'DCGM_FI_DEV_GPU_UTIL{' + INST + '}'
     assert DEFAULT_QUERIES["gpu_mem"] == (
-        '100 * nvidia_smi_memory_used_bytes{' + inst + '}'
-        ' / nvidia_smi_memory_total_bytes{' + inst + '}')
-    assert DCGM_QUERIES["gpu_util"] == 'DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}'
-    assert DCGM_QUERIES["discover_gpus"] == 'count by (Hostname) (DCGM_FI_DEV_GPU_UTIL)'
+        '100 * DCGM_FI_DEV_FB_USED{' + INST + '}'
+        ' / (DCGM_FI_DEV_FB_USED{' + INST + '} + DCGM_FI_DEV_FB_FREE{' + INST + '})')
+    assert DEFAULT_QUERIES["discover_gpus"] == 'count by (instance) (DCGM_FI_DEV_GPU_UTIL)'
+    assert NVIDIA_SMI_QUERIES["gpu_util"] == '100 * nvidia_smi_utilization_gpu_ratio{' + INST + '}'
+    assert NVIDIA_SMI_QUERIES["discover_gpus"] == 'count by (instance) (nvidia_smi_utilization_gpu_ratio)'
+
+
+async def test_fetch_usage_parses_real_dcgm_labels():
+    mapping = [
+        ("node_cpu_seconds_total", [frame(3.0)]),
+        ("node_memory_MemAvailable_bytes", [frame(4.0)]),
+        ("DCGM_FI_DEV_FB_USED", [frame(25.0, DCGM_LABELS)]),
+        ("DCGM_FI_DEV_GPU_UTIL", [frame(61.0, DCGM_LABELS)]),
+    ]
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=by_query(mapping))
+        u = await fetch_usage(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES,
+                              "rvp01-Cocaina", 1, NOW)
+    assert [(g.util_pct, g.mem_pct) for g in u.gpus] == [(61.0, 25.0)]
+
+
+async def test_discover_real_dcgm_series_by_instance():
+    hosts = await _discover([
+        (HOSTS_Q, [frame(64, {"instance": "rvp01-Cocaina"})]),
+        (GPUS_Q, [frame(1, {"instance": "rvp01-Cocaina", "job": "dcgm",
+                            "hostname": "3e6b14aa0faf"})]),
+    ])
+    assert list(hosts) == [DiscoveredHost("rvp01-Cocaina", "rvp01-Cocaina", 1)]
 
 
 def test_instance_matchers_are_case_insensitive_and_domain_tolerant():
@@ -281,21 +309,25 @@ def _legacy_saved(i=0):
 
 def test_legacy_defaults_cover_every_previous_form():
     assert set(LEGACY_DEFAULT_QUERIES) == {"cpu", "ram", "gpu_util", "gpu_mem", "discover_gpus"}
-    assert DCGM_QUERIES["gpu_util"] in LEGACY_DEFAULT_QUERIES["gpu_util"]
+    assert 'DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}' in LEGACY_DEFAULT_QUERIES["gpu_util"]
+    assert 'count by (Hostname) (DCGM_FI_DEV_GPU_UTIL)' in LEGACY_DEFAULT_QUERIES["discover_gpus"]
     assert ('100 * nvidia_smi_utilization_gpu_ratio{instance=~"{instance_re}(:.*)?"}'
             in LEGACY_DEFAULT_QUERIES["gpu_util"])
-    assert all("(?i)" not in v for vs in LEGACY_DEFAULT_QUERIES.values() for v in vs)
+    for k, v in NVIDIA_SMI_QUERIES.items():  # case-insensitive nvidia defaults too
+        assert v in LEGACY_DEFAULT_QUERIES[k]
+    # no current default is its own legacy form
+    assert all(DEFAULT_QUERIES[k] not in vs for k, vs in LEGACY_DEFAULT_QUERIES.items())
 
 
 def test_effective_queries_treats_legacy_defaults_as_unset():
-    assert effective_queries(_legacy_saved(0)) == DEFAULT_QUERIES  # DCGM + old cpu/ram
-    assert effective_queries(_legacy_saved(1)) == DEFAULT_QUERIES  # case-sensitive nvidia
+    for i in range(3):  # DCGM Hostname + old cpu/ram, case-sensitive nvidia, (?i) nvidia
+        assert effective_queries(_legacy_saved(i)) == DEFAULT_QUERIES, i
 
 
 def test_effective_queries_keeps_customised_values():
     custom = 'DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}",gpu!=""}'
     q = effective_queries({"gpu_util": custom, "cpu": "my_cpu", "ram": "",
-                           "gpu_mem": DCGM_QUERIES["gpu_mem"]})
+                           "gpu_mem": LEGACY_DEFAULT_QUERIES["gpu_mem"][0]})
     assert q["gpu_util"] == custom and q["cpu"] == "my_cpu"
     assert q["ram"] == DEFAULT_QUERIES["ram"] and q["gpu_mem"] == DEFAULT_QUERIES["gpu_mem"]
     assert effective_queries(None) == DEFAULT_QUERIES
@@ -312,9 +344,9 @@ async def test_fetch_usage_pairs_uuid_only_gpus_across_orders():
     mapping = [
         ("node_cpu_seconds_total", [frame(1.0)]),
         ("node_memory_MemAvailable_bytes", [frame(2.0)]),
-        ("utilization_gpu_ratio", [frame(90.0, {"uuid": "GPU-bbb", "instance": "srv:9835"}),
+        ("DCGM_FI_DEV_GPU_UTIL", [frame(90.0, {"uuid": "GPU-bbb", "instance": "srv:9835"}),
                                    frame(5.0, {"uuid": "GPU-aaa", "instance": "srv:9835"})]),
-        ("memory_used_bytes", [frame(10.0, {"uuid": "GPU-aaa", "instance": "srv:9835"}),
+        ("DCGM_FI_DEV_FB_USED", [frame(10.0, {"uuid": "GPU-aaa", "instance": "srv:9835"}),
                                frame(30.0, {"uuid": "GPU-bbb", "instance": "srv:9835"})]),
     ]
     with respx.mock:

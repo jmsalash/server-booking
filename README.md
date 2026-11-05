@@ -56,27 +56,28 @@ The web UI listens on port 8000. The only configuration is `DATABASE_URL`
 6. Grafana: enter the URL and a token (a read-only service-account token is
    preferred; user/password also works), press Test, then choose the datasource.
    The default PromQL query templates target node_exporter (CPU, RAM, host
-   discovery) and [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter)
-   (GPUs, e.g. `100 * nvidia_smi_utilization_gpu_ratio{instance=~"(?i){instance_re}(\\.[^:]*)?(:.*)?"}`;
-   its `*_ratio` metrics are 0-1, hence the `100 *`). The instance matchers are
-   case-insensitive and accept a domain suffix and a port, so a server stored as
-   `gpu-01` matches `instance="GPU-01.lab:9100"`. Adjust them to your labels:
+   discovery) and the NVIDIA DCGM exporter (GPUs), all matched on the `instance`
+   label (e.g. `DCGM_FI_DEV_GPU_UTIL{instance=~"(?i){instance_re}(\\.[^:]*)?(:.*)?"}`).
+   The instance matchers are case-insensitive and accept a domain suffix and a
+   port, so a server stored as `gpu-01` matches `instance="GPU-01.lab:9100"`.
+   Adjust them to your labels:
    - `{instance}` is replaced by the server's exact instance/hostname value
-     (used with `=`, e.g. `DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}`).
+     (used with `=`).
    - `{instance_re}` is the regex-escaped value for `=~` matchers (e.g.
      `instance=~"{instance_re}(:.*)?"`, which also matches `host:9100`).
 
-   Using the NVIDIA DCGM exporter instead? It labels GPUs by `Hostname`; use
-   these (the defaults of earlier versions):
-   - gpu_util: `DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}`
-   - gpu_mem: `100 * DCGM_FI_DEV_FB_USED{Hostname="{instance}"} / (DCGM_FI_DEV_FB_USED{Hostname="{instance}"} + DCGM_FI_DEV_FB_FREE{Hostname="{instance}"})`
-   - discover_gpus: `count by (Hostname) (DCGM_FI_DEV_GPU_UTIL)`
+   Using [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter)
+   instead? It also labels series by `instance`; its `*_ratio` metrics are 0-1,
+   hence the `100 *`. Use:
+   - gpu_util: `100 * nvidia_smi_utilization_gpu_ratio{instance=~"(?i){instance_re}(\\.[^:]*)?(:.*)?"}`
+   - gpu_mem: `100 * nvidia_smi_memory_used_bytes{...same matcher} / nvidia_smi_memory_total_bytes{...same matcher}`
+   - discover_gpus: `count by (instance) (nvidia_smi_utilization_gpu_ratio)`
 
-   Saved queries that are exactly a default of an earlier version (these DCGM
-   queries, or the older case-sensitive `instance=~"{instance_re}(:.*)?"` forms)
-   are treated as unset and replaced by the current defaults. To keep using DCGM, save a
-   slightly different query (e.g. add `,gpu!=""` inside the braces:
-   `DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}",gpu!=""}`).
+   Saved queries that are exactly a default of an earlier version (the old DCGM
+   `Hostname="{instance}"` queries, the nvidia_gpu_exporter queries, or the older
+   case-sensitive `instance=~"{instance_re}(:.*)?"` forms) are treated as unset
+   and replaced by the current defaults. To keep one of them, save a slightly
+   different query (e.g. add `,gpu!=""` inside the braces).
 
    To inspect what your Grafana exposes, run the probe on the host (`scripts/`
    is not in the image) from a dev venv (`python -m venv .venv && .venv/bin/pip

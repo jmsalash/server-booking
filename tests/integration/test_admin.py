@@ -1,5 +1,6 @@
 import secrets
 from datetime import UTC, datetime, timedelta
+from html.parser import HTMLParser
 
 import pytest
 import pytest_asyncio
@@ -260,7 +261,7 @@ def _discovered(grafana, gpu=None):
     grafana.series["count by (instance) (node_cpu"] = [
         Series({"instance": "gpu-01.lab:9100"}, 64), Series({"instance": "cpu-02:9100"}, 8),
         Series({"instance": "old-03:9100"}, 4)]
-    grafana.series["nvidia_smi_utilization_gpu_ratio)"] = gpu if gpu is not None else [
+    grafana.series["DCGM_FI_DEV_GPU_UTIL)"] = gpu if gpu is not None else [
         Series({"instance": "gpu-01:9835"}, 4)]
 
 
@@ -295,7 +296,7 @@ async def test_import_page_lists_hosts_and_marks_existing(client, logged_in_admi
     assert r.status_code == 200
     assert 'value="gpu-01.lab"' in r.text and 'value="cpu-02"' in r.text
     assert 'name="gpu_count_1" value="4"' in r.text  # sorted: cpu-02, gpu-01.lab, old-03
-    assert r.text.count("already added") == 2
+    assert r.text.count("Already added") == 2
     assert r.text.count("disabled") >= 2
     assert grafana.args[0] == "http://grafana.lab"
 
@@ -373,7 +374,7 @@ async def test_import_rejects_duplicates_within_batch_and_existing_instance(
         **_import_row(0, "a", "same"), **_import_row(1, "b", "SAME")})
     assert r.status_code == 400 and "already exists" in r.text
     r = await client.post("/admin/servers/import", data=_import_row(0, "old-03", "new-name"))
-    assert r.status_code == 400 and "already added" in r.text
+    assert r.status_code == 400 and "Already added" in r.text
     db.expire_all()
     assert len((await db.scalars(select(Server))).all()) == 1
 
@@ -409,8 +410,8 @@ async def test_integrations_migrates_stored_legacy_dcgm_defaults(client, logged_
     await store.set(K.GRAFANA_QUERIES, {**legacy, "cpu": "my_cpu"})
     await db.commit()
     r = await client.get("/admin/integrations")
-    assert 'name="q_gpu_util" rows="3">100 * nvidia_smi_utilization_gpu_ratio{' in r.text
-    assert 'name="q_discover_gpus" rows="3">count by (instance) (nvidia_smi' in r.text
+    assert 'name="q_gpu_util" rows="3">DCGM_FI_DEV_GPU_UTIL{' in r.text
+    assert 'name="q_discover_gpus" rows="3">count by (instance) (DCGM_FI_DEV_GPU_UTIL)' in r.text
     assert 'name="q_cpu" rows="3">my_cpu<' in r.text
     assert "nvidia_gpu_exporter" in r.text and "DCGM_FI_DEV_FB_FREE" in r.text  # help text
     # Re-saving the form with the old DCGM text does not store it as an override.
@@ -507,10 +508,10 @@ async def test_import_by_ip(client, logged_in_admin, db, store, make_server, gra
     _discovered(grafana)
     dns["cpu-02"] = {"10.0.0.5"}
     r = await client.get("/admin/servers/import")
-    assert r.text.count("already added") == 1  # cpu-02 is by-ip
+    assert r.text.count("Already added") == 1  # cpu-02 is by-ip
     r = await client.post("/admin/servers/import", data=_import_row(0, "cpu-02"))
     assert r.status_code == 400 and "already exists as &#34;by-ip&#34;" in r.text
-    assert "already added" in r.text
+    assert "Already added" in r.text
 
 
 async def test_import_page_caps_rows(client, logged_in_admin, db, store, grafana, monkeypatch):
@@ -858,3 +859,46 @@ async def test_admin_actions_audited(client, logged_in_admin, db, make_server, b
     assert all(e.actor_user_id == admin_id for e in entries)
     page = await client.get("/admin/audit")
     assert page.status_code == 200 and "admin.server_create" in page.text
+
+
+class _CheckboxLabels(HTMLParser):
+    """Collects (input name, text of the enclosing <label>) for every checkbox."""
+
+    def __init__(self):
+        super().__init__()
+        self.labels: list[dict] = []  # open <label> elements
+        self.found: list[tuple[str, dict | None]] = []
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "label":
+            self.labels.append({"text": ""})
+        elif tag == "input" and a.get("type") == "checkbox":
+            self.found.append((a.get("name", ""), self.labels[-1] if self.labels else None))
+
+    def handle_endtag(self, tag):
+        if tag == "label" and self.labels:
+            self.labels.pop()
+
+    def handle_data(self, data):
+        for label in self.labels:
+            label["text"] += data
+
+
+@pytest.mark.parametrize("path", ["/admin/servers/new", "edit"])
+async def test_server_form_checkboxes_have_visible_labels(client, logged_in_admin, make_server,
+                                                          db, path):
+    if path == "edit":
+        s = await make_server(name="gpu-09", kind="grafana", has_gpu=True, gpu_count=2)
+        await db.commit()
+        path = f"/admin/servers/{s.id}"
+    parser = _CheckboxLabels()
+    parser.feed((await client.get(path)).text)
+    labels = {name: label for name, label in parser.found}
+    assert set(labels) == {"has_gpu", "shareable", "enabled"}
+    for name, label in labels.items():
+        assert label is not None, f"checkbox {name} is not inside a <label>"
+        assert label["text"].strip(), f"checkbox {name} has no visible label text"
+    assert labels["shareable"]["text"].strip() == "Shareable"
+    assert labels["enabled"]["text"].strip() == "Enabled"
+    assert labels["has_gpu"]["text"].strip() == "Has GPU"

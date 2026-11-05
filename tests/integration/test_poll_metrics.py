@@ -170,7 +170,7 @@ async def test_poll_keeps_last_ok_at(db, store, make_server):
     assert (await store.get("health.last_poll"))["last_ok_at"] == NOW.isoformat()
 
 
-async def test_poll_uses_new_gpu_defaults_over_stored_legacy_dcgm(db, store, make_server):
+async def test_poll_uses_new_gpu_defaults_over_stored_legacy_defaults(db, store, make_server):
     from app.integrations.grafana import LEGACY_DEFAULT_QUERIES
     await configure(store)
     # saved verbatim by the old form: DCGM GPU queries, case-sensitive cpu/ram
@@ -187,7 +187,7 @@ async def test_poll_uses_new_gpu_defaults_over_stored_legacy_dcgm(db, store, mak
         respx.post(f"{BASE}/api/ds/query").mock(side_effect=record)
         res = await poll_metrics(db, store, factory, NOW)
     assert res.ok == 1, res.failed
-    assert not any("DCGM" in e for e in seen)
-    assert any(e.startswith("100 * nvidia_smi_utilization_gpu_ratio") for e in seen)
+    assert not any("nvidia_smi" in e or "Hostname" in e for e in seen)
+    assert any(e.startswith("DCGM_FI_DEV_GPU_UTIL{instance=~") for e in seen)
     assert all(r"(?i)g\\-host" in e for e in seen)  # PromQL text: g\\-host
     assert len((await usage.latest(db, s.id)).gpus) == 1
