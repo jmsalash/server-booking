@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.grafana import (
-    DEFAULT_QUERIES, GrafanaClient, GrafanaError, MetricsUnavailable, fetch_usage,
+    DEFAULT_QUERIES, GrafanaClient, GrafanaError, MetricsUnavailable, fetch_usage, redact,
 )
 from app.models import Server
 from app.services import usage as usage_svc
@@ -52,6 +52,7 @@ async def poll_metrics(
     )).all()
     ok = 0
     failed: dict[str, str] = {}
+    secrets = (await store.get(K.GRAFANA_PASSWORD), await store.get(K.GRAFANA_TOKEN))
     for s in servers:
         try:
             u = await fetch_usage(client, ds_uid, queries, s.grafana_instance or s.hostname,
@@ -60,7 +61,7 @@ async def poll_metrics(
                 await usage_svc.save_snapshot(db, s.id, u)
             ok += 1
         except (GrafanaError, MetricsUnavailable, SQLAlchemyError) as e:
-            failed[s.name] = str(e)
+            failed[s.name] = redact(str(e), secrets)  # never persist credentials
     await store.set(HEALTH_KEY, {"at": now.isoformat(), "ok": ok, "failed": failed})
     return PollResult(ok, failed)
 

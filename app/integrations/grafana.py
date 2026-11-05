@@ -15,6 +15,17 @@ DEFAULT_QUERIES: dict[str, str] = {
 }
 
 
+REDACTED = "••••"
+
+
+def redact(message: str, secrets=()) -> str:
+    """Remove known secret values and URL credentials (scheme://user:pw@) from a message."""
+    for s in secrets:
+        if s:
+            message = message.replace(s, REDACTED)
+    return re.sub(r"(://)[^/@\s]+@", rf"\1{REDACTED}@", message)
+
+
 class GrafanaError(Exception):
     """HTTP/transport/protocol failure talking to Grafana."""
 

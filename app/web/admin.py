@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import clock
 from app.domain.rules import Rules
 from app.integrations.gcal import GoogleCalendarClient
-from app.integrations.grafana import DEFAULT_QUERIES, GrafanaClient, fetch_usage
+from app.integrations.grafana import DEFAULT_QUERIES, GrafanaClient, fetch_usage, redact
 from app.jobs.metrics import HEALTH_KEY
 from app.models import AuditLog, Booking, OutboxItem, Server, TelegramTopic, User
 from app.services import audit, board, booking, inventory
@@ -61,10 +61,7 @@ def default_calendar_factory(sa_json: str, calendar_id: str) -> GoogleCalendarCl
 
 def sanitize(message: str, secrets: Iterable[str | None] = ()) -> str:
     """Remove known secret values and URL credentials from an error message."""
-    for s in secrets:
-        if s:
-            message = message.replace(s, SECRET_PLACEHOLDER)
-    return re.sub(r"(://)[^/@\s]+@", rf"\1{SECRET_PLACEHOLDER}@", message)
+    return redact(message, secrets)
 
 
 def describe_error(e: Exception, secrets: Iterable[str | None] = ()) -> str:
@@ -72,8 +69,14 @@ def describe_error(e: Exception, secrets: Iterable[str | None] = ()) -> str:
 
 
 def valid_http_url(url: str) -> bool:
+    """An http(s) URL with a host and no embedded credentials (user:pw@)."""
     parts = urlsplit(url)
-    return parts.scheme in ("http", "https") and bool(parts.netloc)
+    return (parts.scheme in ("http", "https") and bool(parts.hostname)
+            and "@" not in parts.netloc)
+
+
+def _host(url: str | None) -> str:
+    return urlsplit(url).netloc.lower() if url else ""
 
 
 async def record(
@@ -117,7 +120,7 @@ async def grafana_ctx(store: SettingsStore) -> dict:
     if ds_uid and all(d["uid"] != ds_uid for d in datasources):
         datasources.append({"uid": ds_uid, "name": ds_uid})
     return {
-        "url": await store.get(K.GRAFANA_URL) or "",
+        "url": sanitize(await store.get(K.GRAFANA_URL) or ""),  # legacy user:pw@ URLs
         "user": await store.get(K.GRAFANA_USER) or "",
         "password_set": await store.get(K.GRAFANA_PASSWORD) is not None,
         "token_set": await store.get(K.GRAFANA_TOKEN) is not None,
@@ -160,7 +163,18 @@ async def handle_grafana_post(
         if q and q != DEFAULT_QUERIES[k]:
             queries[k] = q
     if url and not valid_http_url(url):
-        return "The Grafana URL must start with http:// or https://.", None, False
+        return ("The Grafana URL must start with http:// or https:// and must not contain "
+                "credentials (use the user/password fields).", None, False)
+    old_url = await store.get(K.GRAFANA_URL)
+    if old_url and url and _host(url) != _host(old_url):
+        # Saved credentials are never sent to a different host: they must be typed again.
+        missing = [label for key, label, new in (
+            (K.GRAFANA_PASSWORD, "password", new_password),
+            (K.GRAFANA_TOKEN, "API token", new_token),
+        ) if not new and await store.get(key) is not None]
+        if missing:
+            return (f"The Grafana host changed — re-enter the {' and '.join(missing)}; saved "
+                    "credentials are not sent to a new host.", None, False)
     allowed = {d["uid"] for d in await store.get(DS_CACHE_KEY) or []}
     if ds_uid and ds_uid not in allowed and ds_uid != await store.get(K.GRAFANA_DS_UID):
         return "Choose a datasource from the last connection test.", None, False
@@ -440,10 +454,10 @@ async def _parse_server_form(
         gpu_count = int(values["gpu_count"])
     except ValueError:
         gpu_count = -1
-    if not 0 <= gpu_count <= 64:
-        errors.append("GPU count must be a whole number of 0 or more.")
     if not values["has_gpu"]:
         gpu_count = 0
+    elif not 1 <= gpu_count <= 64:
+        errors.append("GPU count must be a whole number from 1 to 64 for a server with a GPU.")
     shareable = values["shareable"] and values["kind"] != "standalone"
     fields = {
         "name": values["name"], "hostname": values["hostname"], "kind": values["kind"],
@@ -590,6 +604,16 @@ RULE_LABELS = {
     "stale_after_min": "Metrics stale after (minutes)",
     "snapshot_retention_h": "Keep snapshots (hours)",
 }
+RULE_MAX = {  # upper bounds keep timedelta arithmetic in the jobs from overflowing
+    "max_booking_hours": 8760,
+    "soon_window_min": 10080,
+    "idle_window_min": 10080,
+    "max_idle_warnings": 20,
+    "share_avg_min": 10080,
+    "spike_avg_min": 10080,
+    "stale_after_min": 10080,
+    "snapshot_retention_h": 720,
+}
 DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 
@@ -631,6 +655,8 @@ def parse_rules_form(form) -> tuple[dict, Rules | None, list[str]]:
                 n = 0
             if n < 1:
                 errors.append(f"{label}: must be a positive whole number.")
+            elif n > RULE_MAX[f.name]:
+                errors.append(f"{label}: must be at most {RULE_MAX[f.name]}.")
             else:
                 kw[f.name] = n
         else:
@@ -752,6 +778,10 @@ async def health_page(
             poll_at = datetime.fromisoformat(last_poll["at"])
         except ValueError:
             poll_at = None
+    if last_poll and isinstance(last_poll.get("failed"), dict):
+        secrets = (await store.get(K.GRAFANA_PASSWORD), await store.get(K.GRAFANA_TOKEN))
+        last_poll = {**last_poll, "failed": {
+            name: sanitize(str(err), secrets) for name, err in last_poll["failed"].items()}}
     rules = await store.get_rules()
     return render(request, "admin/health.html", {
         "user": user, "section": "health", "last_poll": last_poll, "poll_at": poll_at,

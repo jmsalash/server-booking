@@ -128,3 +128,20 @@ async def test_poll_http_500_reported_failed(db, store, make_server):
         respx.post(f"{BASE}/api/ds/query").mock(return_value=httpx.Response(500))
         res = await poll_metrics(db, store, factory, NOW)
     assert res.ok == 0 and "500" in res.failed["s"]
+
+
+async def test_poll_failure_messages_never_store_credentials(db, store, make_server):
+    await configure(store)
+    await store.set(K.GRAFANA_PASSWORD, "hunter2", secret=True)
+    await make_server(name="m", kind="grafana", grafana_instance="m")
+
+    async def creds_factory(_store):
+        return GrafanaClient("http://viewer:hunter2@grafana.test", None, None, None)
+
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(
+            side_effect=httpx.ConnectError("refused http://viewer:hunter2@grafana.test token=hunter2"))
+        res = await poll_metrics(db, store, creds_factory, NOW)
+    stored = (await store.get("health.last_poll"))["failed"]["m"]
+    assert "refused" in stored and "hunter2" not in stored and "viewer" not in stored
+    assert "hunter2" not in res.failed["m"]

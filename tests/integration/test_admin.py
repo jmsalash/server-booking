@@ -181,6 +181,16 @@ async def test_server_form_validation(client, logged_in_admin, db, make_server):
     assert len((await db.scalars(select(Server))).all()) == 1
 
 
+async def test_gpu_server_needs_at_least_one_gpu(client, logged_in_admin, db):
+    r = await client.post("/admin/servers/new", data={**SERVER_FORM, "has_gpu": "on",
+                                                      "gpu_count": "0"})
+    assert r.status_code == 400 and "from 1 to 64" in r.text
+    r = await client.post("/admin/servers/new", data={**SERVER_FORM, "has_gpu": "on",
+                                                      "gpu_count": "65"})
+    assert r.status_code == 400
+    assert (await db.scalars(select(Server))).all() == []
+
+
 async def test_edit_server_keeps_own_name(client, logged_in_admin, db, make_server):
     s = await make_server(name="cpu-07")
     await db.commit()
@@ -255,6 +265,15 @@ async def test_rules_validation(client, logged_in_admin, db, store):
     assert await fresh(db, store, K.RULES) is None
 
 
+async def test_rules_upper_bounds(client, logged_in_admin, db, store):
+    r = await client.post("/admin/rules", data=_rules_form(stale_after_min="2000000000"))
+    assert r.status_code == 400 and "at most 10080" in r.text
+    r = await client.post("/admin/rules", data=_rules_form(snapshot_retention_h="721",
+                                                           max_idle_warnings="21"))
+    assert r.status_code == 400 and "at most 720" in r.text and "at most 20" in r.text
+    assert await fresh(db, store, K.RULES) is None
+
+
 async def test_rules_saved(client, logged_in_admin, db, store):
     form = _rules_form(max_booking_hours="48", timezone="Europe/London", idle_cpu_pct="7.5")
     form["work_days"] = ["0", "2"]
@@ -307,6 +326,41 @@ async def test_grafana_test_lists_prometheus_datasources(client, logged_in_admin
     assert r.status_code == 303
     assert await fresh(db, store, K.GRAFANA_DS_UID) == "prom1"
     assert await store.get(K.GRAFANA_QUERIES) == {"cpu": 'my_cpu{instance="{instance}"}'}
+
+
+GRAFANA_FORM = {"action": "save", "url": "http://grafana.lab", "user": "viewer", "password": "",
+                "token": "", "ds_uid": ""}
+
+
+async def test_grafana_url_with_credentials_rejected(client, logged_in_admin, db, store, grafana):
+    r = await client.post("/admin/integrations/grafana", data={
+        **GRAFANA_FORM, "url": "https://admin:pw123@grafana.lab"})
+    assert r.status_code == 400 and "must not contain credentials" in r.text
+    assert "pw123" not in r.text
+    assert await fresh(db, store, K.GRAFANA_URL) is None
+    # a URL stored before this check existed is never echoed with its credentials
+    await store.set(K.GRAFANA_URL, "https://admin:pw123@grafana.lab")
+    await db.commit()
+    assert "pw123" not in (await client.get("/admin/integrations")).text
+
+
+async def test_grafana_host_change_requires_secrets_again(client, logged_in_admin, db, store,
+                                                          grafana):
+    await store.set(K.GRAFANA_URL, "http://grafana.lab")
+    await store.set(K.GRAFANA_PASSWORD, "old-pw", secret=True)
+    await db.commit()
+    r = await client.post("/admin/integrations/grafana", data={
+        **GRAFANA_FORM, "action": "test", "url": "http://evil.example"})
+    assert r.status_code == 400 and "re-enter the password" in r.text
+    assert grafana.args is None  # nothing was sent anywhere
+    assert await fresh(db, store, K.GRAFANA_URL) == "http://grafana.lab"
+    # same host, different path: blank still keeps the saved password
+    r = await client.post("/admin/integrations/grafana", data={
+        **GRAFANA_FORM, "action": "test", "url": "http://grafana.lab/grafana"})
+    assert r.status_code == 200 and grafana.args[2] == "old-pw"
+    r = await client.post("/admin/integrations/grafana", data={
+        **GRAFANA_FORM, "action": "test", "url": "http://new.lab", "password": "new-pw"})
+    assert r.status_code == 200 and grafana.args == ("http://new.lab", "viewer", "new-pw", None)
 
 
 async def test_grafana_test_failure_shown(client, logged_in_admin, grafana):
@@ -408,6 +462,15 @@ async def test_health_page(client, logged_in_admin, db, store, make_user, make_s
     assert r.status_code == 200
     for text in ("mon-9", "boom", "stale-1", "Blocked Bob", "tg_dm", "not configured"):
         assert text in r.text
+
+
+async def test_health_page_sanitises_poll_errors(client, logged_in_admin, db, store):
+    await store.set(K.GRAFANA_TOKEN, "tok-123", secret=True)
+    await store.set(HEALTH_KEY, {"at": NOW.isoformat(), "ok": 0, "failed": {
+        "mon-1": "ConnectError: http://admin:pw9@grafana.lab refused, auth tok-123"}})
+    await db.commit()
+    r = await client.get("/admin/health")
+    assert "refused" in r.text and "pw9" not in r.text and "tok-123" not in r.text
 
 
 async def test_health_retry_resets_failed_outbox(client, logged_in_admin, db):
