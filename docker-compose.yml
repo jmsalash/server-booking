@@ -6,6 +6,7 @@ x-app-env: &app-env
 services:
   db:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: booking
       POSTGRES_PASSWORD: booking
@@ -20,6 +21,7 @@ services:
 
   web:
     build: .
+    restart: unless-stopped
     command: sh -c "alembic upgrade head && exec uvicorn app.web.main:create_app --factory --host 0.0.0.0 --port 8000 --proxy-headers"
     environment: *app-env
     ports:
@@ -32,6 +34,7 @@ services:
 
   worker:
     build: .
+    restart: unless-stopped
     command: python -m app.worker
     environment: *app-env
     volumes:
