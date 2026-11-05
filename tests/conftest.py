@@ -133,3 +133,11 @@ async def booking(db, make_user, make_server):
     db.add(b)
     await db.flush()
     return b
+
+
+@pytest.fixture
+def bot_ctx(sessionmaker, box):
+    from app.bot.handlers import BotContext
+    from tests.fakes import FakeTelegram
+
+    return BotContext(sessionmaker, FakeTelegram(), box)
