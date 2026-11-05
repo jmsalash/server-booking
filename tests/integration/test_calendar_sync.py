@@ -75,6 +75,26 @@ async def test_update_before_create_retries(db, store, booking, fake_cal):
     await process_due(db, cs.make_handlers(fake_cal), NOW)
     item = (await db.execute(select(OutboxItem))).scalar_one()
     assert item.attempts == 1 and item.done_at is None
+    await cs.queue_create(db, store, booking.id, NOW)
+    booking.end_at = booking.end_at + timedelta(hours=2)
+    h = cs.make_handlers(fake_cal)
+    # update (lower id) runs before create, fails again; create then succeeds
+    await process_due(db, h, NOW + timedelta(seconds=61))
+    assert len(fake_cal.events) == 1
+    await process_due(db, h, NOW + timedelta(seconds=300))
+    assert fake_cal.events["evt-1"]["end"] == booking.end_at
+    items = (await db.execute(select(OutboxItem))).scalars().all()
+    assert len(items) == 2 and all(i.done_at is not None for i in items)
+
+
+async def test_update_on_cancelled_booking_without_event_is_done(db, store, booking, fake_cal):
+    await _configure(store)
+    booking.status = "cancelled"
+    await cs.queue_update(db, store, booking.id, NOW)
+    await process_due(db, cs.make_handlers(fake_cal), NOW)
+    item = (await db.execute(select(OutboxItem))).scalar_one()
+    assert item.done_at is not None and item.attempts == 0
+    assert fake_cal.events == {}
 
 
 async def test_calendar_down_booking_kept_and_retried(db, store, booking, fake_cal):

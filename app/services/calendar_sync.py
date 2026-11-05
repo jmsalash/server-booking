@@ -59,7 +59,7 @@ def make_handlers(client: CalendarClient) -> dict[str, Handler]:
 
     async def update(db: AsyncSession, payload: dict) -> None:
         b = await db.get(Booking, payload["booking_id"])
-        if b is None:
+        if b is None or b.status != "active":
             return
         if not b.calendar_event_id:
             # create has not run yet: fail generically so the outbox retries later.
