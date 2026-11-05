@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 
 import telegram
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram.error import BadRequest
 from telegram.ext import (
@@ -122,8 +122,17 @@ async def _get_or_create_user(db: AsyncSession, tg: TgUser, status: MemberStatus
     return user
 
 
+async def _clear_dm_blocked(db: AsyncSession, telegram_id: int) -> None:
+    """The user just messaged the bot privately, so they have unblocked it."""
+    await db.execute(
+        update(User).where(User.telegram_id == telegram_id, User.dm_blocked.is_(True))
+        .values(dm_blocked=False)
+    )
+
+
 async def on_start(ctx: BotContext, tg: TgUser, payload: str | None, now: datetime) -> Reply:
     async with _session(ctx) as (db, store):
+        await _clear_dm_blocked(db, tg.id)
         if payload:
             if await store.get(K.TG_GROUP_ID) is None:
                 return Reply(NOT_SET_UP)
@@ -188,6 +197,8 @@ async def on_command(
     thread_id: int | None, is_private: bool, now: datetime,
 ) -> Reply | None:
     async with _session(ctx) as (db, store):
+        if is_private:
+            await _clear_dm_blocked(db, tg.id)
         group = await store.get(K.TG_GROUP_ID)
         if not is_private:
             topic = await store.get(K.TG_TOPIC_ID)

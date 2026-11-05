@@ -331,3 +331,33 @@ def test_build_application_registers_handlers(bot_ctx):
     assert any(isinstance(h, CallbackQueryHandler) for h in handlers)
     assert any(isinstance(h, MessageHandler) for h in handlers)
     assert app.error_handlers
+
+
+async def _blocked(db, tg_id):
+    return await db.scalar(
+        select(User.dm_blocked).where(User.telegram_id == tg_id)
+        .execution_options(populate_existing=True)
+    )
+
+
+async def test_start_clears_dm_blocked(bot_ctx, db, store, make_user):
+    await make_user(telegram_id=ANA.id, dm_blocked=True)
+    await _configure(db, store)
+    await on_start(bot_ctx, ANA, None, NOW)
+    assert await _blocked(db, ANA.id) is False
+
+
+async def test_private_command_clears_dm_blocked(bot_ctx, db, store, make_user):
+    await make_user(telegram_id=ANA.id, dm_blocked=True)
+    await _configure(db, store)
+    _member(bot_ctx)
+    await _cmd(bot_ctx, "free", chat_id=ANA.id, thread_id=None, is_private=True)
+    assert await _blocked(db, ANA.id) is False
+
+
+async def test_group_command_keeps_dm_blocked(bot_ctx, db, store, make_user):
+    await make_user(telegram_id=ANA.id, dm_blocked=True)
+    await _configure(db, store)
+    _member(bot_ctx)
+    await _cmd(bot_ctx, "free")
+    assert await _blocked(db, ANA.id) is True
