@@ -21,6 +21,12 @@
     <fieldset>
       <legend>Query templates</legend>
       <p class="muted"><code>{instance}</code> is replaced by the server's Grafana instance as-is (use it with <code>=</code>); <code>{instance_re}</code> is the regex-escaped instance (use it inside <code>=~</code>).</p>
+      <p class="muted">The defaults target <strong>node_exporter</strong> (CPU, RAM, hosts) and <strong>nvidia_gpu_exporter</strong> (GPUs, labelled <code>instance</code> like node_exporter).</p>
+      <details>
+        <summary>Using the NVIDIA DCGM exporter instead?</summary>
+        <p class="muted">DCGM labels GPUs by <code>Hostname</code>. These were the defaults of earlier versions; a saved query that is exactly one of them is treated as unset and replaced by the nvidia_gpu_exporter default, so change it slightly (e.g. add <code>,gpu!=""</code> inside the braces) to keep using DCGM.</p>
+        {% for key, q in grafana.dcgm_queries.items() %}<p><code>{{ key }}</code>: <code>{{ q }}</code></p>{% endfor %}
+      </details>
       {% for key, q in grafana.queries.items() %}
       <label>{{ key }} <textarea name="q_{{ key }}" rows="3">{{ q }}</textarea></label>
       {% if grafana.query_help[key] %}<p class="muted">{{ grafana.query_help[key] }}</p>{% endif %}

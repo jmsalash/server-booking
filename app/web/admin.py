@@ -17,7 +17,8 @@ from app import clock
 from app.domain.rules import Rules
 from app.integrations.gcal import GoogleCalendarClient
 from app.integrations.grafana import (
-    DEFAULT_QUERIES, GrafanaClient, discover_hosts, fetch_usage, redact,
+    DEFAULT_QUERIES, LEGACY_DEFAULT_QUERIES, GrafanaClient, discover_hosts, effective_queries,
+    fetch_usage, redact,
 )
 from app.jobs.metrics import HEALTH_KEY
 from app.models import AuditLog, Booking, OutboxItem, Server, TelegramTopic, User
@@ -40,8 +41,9 @@ QUERY_KEYS = ("cpu", "ram", "gpu_util", "gpu_mem", "discover_hosts", "discover_g
 QUERY_HELP = {
     "discover_hosts": "Import from Grafana: one series per host, labelled instance (a :port "
                       "suffix is dropped).",
-    "discover_gpus": "Import from Grafana: GPU count per host, labelled Hostname (matched to the "
-                     "instance case-insensitively, short name or FQDN).",
+    "discover_gpus": "Import from Grafana: GPU count per host, labelled instance "
+                     "(nvidia_gpu_exporter, :port dropped) or Hostname (DCGM); matched to the "
+                     "host case-insensitively, short name or FQDN.",
 }
 MAX_IMPORT_ROWS = 1000
 STATUSES = ("active", "cancelled", "reclaimed", "completed")
@@ -124,7 +126,7 @@ def _opt_int(value) -> int | None:
 
 
 async def grafana_ctx(store: SettingsStore) -> dict:
-    saved = await store.get(K.GRAFANA_QUERIES) or {}
+    queries = effective_queries(await store.get(K.GRAFANA_QUERIES))
     ds_uid = await store.get(K.GRAFANA_DS_UID)
     datasources = list(await store.get(DS_CACHE_KEY) or [])
     if ds_uid and all(d["uid"] != ds_uid for d in datasources):
@@ -136,8 +138,9 @@ async def grafana_ctx(store: SettingsStore) -> dict:
         "token_set": await store.get(K.GRAFANA_TOKEN) is not None,
         "ds_uid": ds_uid or "",
         "datasources": datasources,
-        "queries": {k: saved.get(k, DEFAULT_QUERIES[k]) for k in QUERY_KEYS},
+        "queries": {k: queries[k] for k in QUERY_KEYS},
         "query_help": QUERY_HELP,
+        "dcgm_queries": LEGACY_DEFAULT_QUERIES,
     }
 
 
@@ -171,7 +174,7 @@ async def handle_grafana_post(
     queries = {}
     for k in QUERY_KEYS:
         q = str(form.get(f"q_{k}", "")).replace("\r\n", "\n").strip()
-        if q and q != DEFAULT_QUERIES[k]:
+        if q and q != DEFAULT_QUERIES[k] and q != LEGACY_DEFAULT_QUERIES.get(k):
             queries[k] = q
     if url and not valid_http_url(url):
         return ("The Grafana URL must start with http:// or https:// and must not contain "
@@ -576,7 +579,7 @@ async def servers_import_page(
     token = await store.get(K.GRAFANA_TOKEN)
     client = request.app.state.grafana_factory(
         await store.get(K.GRAFANA_URL), await store.get(K.GRAFANA_USER), password, token)
-    queries = {**DEFAULT_QUERIES, **(await store.get(K.GRAFANA_QUERIES) or {})}
+    queries = effective_queries(await store.get(K.GRAFANA_QUERIES))
     try:
         hosts = await discover_hosts(client, await store.get(K.GRAFANA_DS_UID), queries)
     except Exception as e:  # noqa: BLE001 - shown to the admin
@@ -759,7 +762,7 @@ async def server_fetch(
     else:
         client = request.app.state.grafana_factory(
             url, await store.get(K.GRAFANA_USER), password, token)
-        queries = {**DEFAULT_QUERIES, **(await store.get(K.GRAFANA_QUERIES) or {})}
+        queries = effective_queries(await store.get(K.GRAFANA_QUERIES))
         try:
             u = await fetch_usage(client, ds_uid, queries,
                                   server.grafana_instance or server.hostname,

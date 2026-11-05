@@ -168,3 +168,24 @@ async def test_poll_keeps_last_ok_at(db, store, make_server):
         return None
     await poll_metrics(db, store, none, later + timedelta(minutes=5))
     assert (await store.get("health.last_poll"))["last_ok_at"] == NOW.isoformat()
+
+
+async def test_poll_uses_new_gpu_defaults_over_stored_legacy_dcgm(db, store, make_server):
+    from app.integrations.grafana import LEGACY_DEFAULT_QUERIES
+    await configure(store)
+    await store.set(K.GRAFANA_QUERIES, dict(LEGACY_DEFAULT_QUERIES))  # saved verbatim by old form
+    s = await make_server(name="g", kind="grafana", grafana_instance="g-host",
+                            has_gpu=True, gpu_count=1)
+    seen = []
+
+    def record(request):
+        seen.append(json.loads(request.content)["queries"][0]["expr"])
+        return side(request)
+
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=record)
+        res = await poll_metrics(db, store, factory, NOW)
+    assert res.ok == 1, res.failed
+    assert not any("DCGM" in e for e in seen)
+    assert any(e.startswith("100 * nvidia_smi_utilization_gpu_ratio") for e in seen)
+    assert len((await usage.latest(db, s.id)).gpus) == 1

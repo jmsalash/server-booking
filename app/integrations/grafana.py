@@ -8,15 +8,39 @@ import httpx
 
 from app.domain.types import GpuUsage, ServerUsage
 
+# Defaults target node_exporter (CPU/RAM, hosts) + utkuozdemir/nvidia_gpu_exporter (GPUs,
+# labelled `instance` like node_exporter). Its *_ratio metrics are 0-1, hence the 100 *.
 DEFAULT_QUERIES: dict[str, str] = {
     "cpu": '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle",instance=~"{instance_re}(:.*)?"}[5m])))',
     "ram": '100 * (1 - node_memory_MemAvailable_bytes{instance=~"{instance_re}(:.*)?"} / node_memory_MemTotal_bytes{instance=~"{instance_re}(:.*)?"})',
-    "gpu_util": 'DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}',
-    "gpu_mem": '100 * DCGM_FI_DEV_FB_USED{Hostname="{instance}"} / (DCGM_FI_DEV_FB_USED{Hostname="{instance}"} + DCGM_FI_DEV_FB_FREE{Hostname="{instance}"})',
+    "gpu_util": '100 * nvidia_smi_utilization_gpu_ratio{instance=~"{instance_re}(:.*)?"}',
+    "gpu_mem": '100 * nvidia_smi_memory_used_bytes{instance=~"{instance_re}(:.*)?"} / nvidia_smi_memory_total_bytes{instance=~"{instance_re}(:.*)?"}',
     # Discovery ("Import from Grafana"): one series per host, labelled `instance` / `Hostname`.
     "discover_hosts": 'count by (instance) (node_cpu_seconds_total{mode="idle"})',
+    "discover_gpus": 'count by (instance) (nvidia_smi_utilization_gpu_ratio)',
+}
+
+# Earlier defaults (NVIDIA DCGM exporter, labelled `Hostname`). Installs that saved the
+# integrations form stored these verbatim; effective_queries() treats them as unset.
+LEGACY_DEFAULT_QUERIES: dict[str, str] = {
+    "gpu_util": 'DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}',
+    "gpu_mem": '100 * DCGM_FI_DEV_FB_USED{Hostname="{instance}"} / (DCGM_FI_DEV_FB_USED{Hostname="{instance}"} + DCGM_FI_DEV_FB_FREE{Hostname="{instance}"})',
     "discover_gpus": 'count by (Hostname) (DCGM_FI_DEV_GPU_UTIL)',
 }
+
+
+def effective_queries(saved: dict | None) -> dict[str, str]:
+    """DEFAULT_QUERIES overlaid with the saved overrides.
+
+    Empty values and values equal to a previous default (LEGACY_DEFAULT_QUERIES) count as unset,
+    so installs that never customised a query follow the current default.
+    """
+    out = dict(DEFAULT_QUERIES)
+    for k, v in (saved or {}).items():
+        if not v or LEGACY_DEFAULT_QUERIES.get(k) == v:
+            continue
+        out[k] = v
+    return out
 
 
 REDACTED = "••••"
@@ -113,12 +137,16 @@ class GrafanaClient:
 
 
 def _gpu_key(s: Series):
-    for name in ("gpu", "minor_number"):
+    """Sort/pair key for one GPU series: DCGM `gpu`, nvidia_gpu_exporter `minor_number`/`index`
+    (numeric) first, then `uuid`, then all labels as a last resort."""
+    for name in ("gpu", "minor_number", "index"):
         raw = s.labels.get(name)
-        if raw is not None:
-            if re.fullmatch(r"\d+", raw):
-                return (0, int(raw), "")
-            return (1, 0, raw)
+        if raw is not None and re.fullmatch(r"\d+", raw.strip()):
+            return (0, int(raw), "")
+    for name in ("gpu", "minor_number", "index", "uuid"):
+        raw = s.labels.get(name)
+        if raw:
+            return (1, 0, f"{name}={raw}")
     return (2, 0, "&".join(f"{k}={v}" for k, v in sorted(s.labels.items())))
 
 
@@ -205,7 +233,8 @@ def _gpu_counts(series: list[Series]) -> tuple[dict[str, int], dict[str, int | N
     exact: dict[str, int] = {}
     short: dict[str, int | None] = {}  # None marks an ambiguous short name
     for s in series:
-        host = s.labels.get("Hostname", "").strip()
+        # DCGM labels the host `Hostname`; nvidia_gpu_exporter uses `instance` (host:port).
+        host = s.labels.get("Hostname", "").strip() or strip_port(s.labels.get("instance", ""))
         if not host:
             continue
         n = max(0, int(round(s.value)))
@@ -218,7 +247,7 @@ def _gpu_counts(series: list[Series]) -> tuple[dict[str, int], dict[str, int | N
 
 async def discover_hosts(client: GrafanaClient, ds_uid: str,
                          queries: dict[str, str]) -> DiscoveredHosts:
-    """List node-exporter hosts with their DCGM GPU count.
+    """List node-exporter hosts with their GPU count (nvidia_gpu_exporter or DCGM).
 
     A failing GPU query never breaks host discovery: every count is 0 and the error is kept on
     the result (``gpu_error``). Errors from the hosts query propagate (GrafanaError).

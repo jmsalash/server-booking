@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.grafana import (
-    DEFAULT_QUERIES, GrafanaClient, GrafanaError, MetricsUnavailable, fetch_usage, redact,
+    GrafanaClient, GrafanaError, MetricsUnavailable, effective_queries, fetch_usage, redact,
 )
 from app.models import Server
 from app.services import usage as usage_svc
@@ -48,7 +48,7 @@ async def poll_metrics(
                                      "note": "Grafana not configured", **last_ok})
         return PollResult(0, {})
     ds_uid = await store.get(K.GRAFANA_DS_UID)
-    queries = {**DEFAULT_QUERIES, **(await store.get(K.GRAFANA_QUERIES) or {})}
+    queries = effective_queries(await store.get(K.GRAFANA_QUERIES))
     servers = (await db.scalars(
         select(Server).where(Server.kind == "grafana", Server.enabled.is_(True)).order_by(Server.id)
     )).all()

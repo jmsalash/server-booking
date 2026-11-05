@@ -257,11 +257,11 @@ async def _configure_grafana(db, store):
 
 
 def _discovered(grafana, gpu=None):
-    grafana.series["count by (instance)"] = [
+    grafana.series["count by (instance) (node_cpu"] = [
         Series({"instance": "gpu-01.lab:9100"}, 64), Series({"instance": "cpu-02:9100"}, 8),
         Series({"instance": "old-03:9100"}, 4)]
-    grafana.series["count by (Hostname)"] = gpu if gpu is not None else [
-        Series({"Hostname": "gpu-01"}, 4)]
+    grafana.series["nvidia_smi_utilization_gpu_ratio)"] = gpu if gpu is not None else [
+        Series({"instance": "gpu-01:9835"}, 4)]
 
 
 def _import_row(i, instance, name=None, gpu_count="0", selected=True, shareable=False):
@@ -400,6 +400,23 @@ async def test_integrations_page_shows_and_saves_discovery_queries(client, logge
         "ds_uid": "", "q_discover_hosts": "count by (instance) (up)"})
     assert (await fresh(db, store, K.GRAFANA_QUERIES))["discover_hosts"] == (
         "count by (instance) (up)")
+
+
+async def test_integrations_migrates_stored_legacy_dcgm_defaults(client, logged_in_admin, db,
+                                                                 store, grafana):
+    from app.integrations.grafana import DEFAULT_QUERIES, LEGACY_DEFAULT_QUERIES
+    await store.set(K.GRAFANA_QUERIES, {**LEGACY_DEFAULT_QUERIES, "cpu": "my_cpu"})
+    await db.commit()
+    r = await client.get("/admin/integrations")
+    assert 'name="q_gpu_util" rows="3">100 * nvidia_smi_utilization_gpu_ratio{' in r.text
+    assert 'name="q_discover_gpus" rows="3">count by (instance) (nvidia_smi' in r.text
+    assert 'name="q_cpu" rows="3">my_cpu<' in r.text
+    assert "nvidia_gpu_exporter" in r.text and "DCGM_FI_DEV_FB_FREE" in r.text  # help text
+    # Re-saving the form with the old DCGM text does not store it as an override.
+    await client.post("/admin/integrations/grafana", data={
+        **GRAFANA_FORM, "q_cpu": "my_cpu", **{f"q_{k}": v for k, v in LEGACY_DEFAULT_QUERIES.items()},
+        "q_gpu_mem": DEFAULT_QUERIES["gpu_mem"]})
+    assert await fresh(db, store, K.GRAFANA_QUERIES) == {"cpu": "my_cpu"}
 
 
 # --- duplicate machines (hostname / instance / IP) ---------------------------------------

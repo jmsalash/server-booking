@@ -14,7 +14,8 @@ sync), `db` (PostgreSQL 16). Secrets entered in the admin UI are encrypted with
 
 - Docker with the Compose plugin
 - A Telegram group with topics enabled, and a bot token from BotFather
-- Optional: a Grafana with a Prometheus datasource (node_exporter, DCGM exporter)
+- Optional: a Grafana with a Prometheus datasource (node_exporter, plus
+  nvidia_gpu_exporter or the DCGM exporter for GPUs)
 - Optional: a Google Cloud service account for Google Calendar
 
 ## Install
@@ -54,11 +55,25 @@ The web UI listens on port 8000. The only configuration is `DATABASE_URL`
 5. Log in with Telegram as a group admin (see "Logging in" below).
 6. Grafana: enter the URL and a token (a read-only service-account token is
    preferred; user/password also works), press Test, then choose the datasource.
-   Adjust the PromQL query templates to your labels:
+   The default PromQL query templates target node_exporter (CPU, RAM, host
+   discovery) and [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter)
+   (GPUs, e.g. `100 * nvidia_smi_utilization_gpu_ratio{instance=~"{instance_re}(:.*)?"}`;
+   its `*_ratio` metrics are 0-1, hence the `100 *`). Adjust them to your labels:
    - `{instance}` is replaced by the server's exact instance/hostname value
      (used with `=`, e.g. `DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}`).
    - `{instance_re}` is the regex-escaped value for `=~` matchers (e.g.
      `instance=~"{instance_re}(:.*)?"`, which also matches `host:9100`).
+
+   Using the NVIDIA DCGM exporter instead? It labels GPUs by `Hostname`; use
+   these (the defaults of earlier versions):
+   - gpu_util: `DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}`
+   - gpu_mem: `100 * DCGM_FI_DEV_FB_USED{Hostname="{instance}"} / (DCGM_FI_DEV_FB_USED{Hostname="{instance}"} + DCGM_FI_DEV_FB_FREE{Hostname="{instance}"})`
+   - discover_gpus: `count by (Hostname) (DCGM_FI_DEV_GPU_UTIL)`
+
+   Saved queries that are exactly those old DCGM defaults are treated as unset
+   and replaced by the nvidia_gpu_exporter defaults. To keep using DCGM, save a
+   slightly different query (e.g. add `,gpu!=""` inside the braces:
+   `DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}",gpu!=""}`).
 
    To inspect what your Grafana exposes, run the probe on the host (`scripts/`
    is not in the image) from a dev venv (`python -m venv .venv && .venv/bin/pip
