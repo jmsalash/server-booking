@@ -22,4 +22,7 @@ async def run_job(
             await db.commit()
         except Exception:
             log.exception("job %s failed", name)
-            await db.rollback()
+            try:
+                await db.rollback()
+            except Exception:  # noqa: BLE001  e.g. the connection died; the job stays contained
+                log.exception("rollback after job %s failed", name)

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.types import StatusCode
@@ -13,7 +13,9 @@ START_REMINDER = timedelta(minutes=30)
 END_REMINDER = timedelta(minutes=60)
 FREE = frozenset({StatusCode.AVAILABLE, StatusCode.BOOKED_SOON, StatusCode.SHAREABLE})
 FREED = frozenset({StatusCode.AVAILABLE, StatusCode.BOOKED_SOON})
-BUSY = frozenset({StatusCode.BOOKED, StatusCode.FREE_SOON})
+# SHAREABLE counts as busy (someone holds the server), so SHAREABLE -> AVAILABLE posts "freed";
+# it is not in FREED, so BOOKED <-> SHAREABLE flapping never posts.
+BUSY = frozenset({StatusCode.BOOKED, StatusCode.FREE_SOON, StatusCode.SHAREABLE})
 
 
 async def _complete(db: AsyncSession, now: datetime) -> None:
@@ -65,8 +67,30 @@ async def _transitions(db: AsyncSession, store: SettingsStore, now: datetime) ->
             await notify.post_topic(db, store, "freed", f"🟢 {server.name} is now free.", now)
 
 
+async def _lock_rows(db: AsyncSession, now: datetime) -> None:
+    """Take every row lock this job may need up front, in the global lock order.
+
+    Lock order shared with the booking service (create/extend lock the server, then the
+    booking) and the monitor jobs (bookings by id): server rows first, ordered by id, then
+    booking rows, ordered by id. Without this, _complete/_reminders would lock bookings and
+    _transitions would lock servers afterwards — the reverse of extend, i.e. a deadlock.
+    The whole job is one transaction (run_job commits), so the locks are held until commit.
+    """
+    await db.execute(select(Server.id).order_by(Server.id).with_for_update())
+    await db.execute(
+        select(Booking.id)
+        .where(
+            Booking.status == "active",
+            or_(Booking.end_at <= now + END_REMINDER, Booking.start_at <= now + START_REMINDER),
+        )
+        .order_by(Booking.id)
+        .with_for_update()
+    )
+
+
 async def booking_lifecycle(db: AsyncSession, store: SettingsStore, now: datetime) -> None:
     rules = await store.get_rules()
+    await _lock_rows(db, now)
     await _complete(db, now)
     await _reminders(db, store, now, ZoneInfo(rules.timezone))
     await _transitions(db, store, now)

@@ -1,8 +1,10 @@
 import logging
 from datetime import datetime, timedelta
 
+import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 
 from app.domain.idle import IdleAction
 from app.domain.timeutil import parse_local
@@ -13,7 +15,7 @@ from app.jobs.runner import run_job
 from app.models import Booking, MetricSnapshot, OutboxItem, Server, User
 from app.services import booking as booking_svc
 from app.services import watchlist
-from app.settings_store import K
+from app.settings_store import K, SettingsStore
 from tests.fakes import FakeTelegram
 
 TZ = "Europe/Rome"
@@ -146,6 +148,27 @@ async def test_idle_job_skips_shared_servers(db, store, make_user, quiet_booking
         assert b.status == "active" and b.idle_since is None and b.idle_warnings == 0
 
 
+async def test_idle_state_reset_while_shared(db, store, make_user, quiet_booking, gpu_server):
+    quiet_booking.idle_warnings = 3
+    quiet_booking.idle_since = L("2026-11-10T09:00")
+    quiet_booking.idle_ram_baseline = 30.0
+    other = await make_user(display_name="Bea")
+    await _book(
+        db, other, gpu_server, L("2026-11-10T10:00"), L("2026-11-10T14:00"), is_shared=True
+    )
+    await _snap(db, gpu_server.id, L("2026-11-10T13:00"))
+    assert await idle_check(db, store, L("2026-11-10T13:00")) == []
+    await db.refresh(quiet_booking)
+    assert (quiet_booking.idle_since, quiet_booking.idle_ram_baseline,
+            quiet_booking.idle_warnings) == (None, None, 0)
+    # The partner leaves; one quiet sample must not reclaim or warn on stale idle state.
+    await _snap(db, gpu_server.id, L("2026-11-10T14:00"))
+    assert await idle_check(db, store, L("2026-11-10T14:00")) == []
+    assert await _items(db) == []
+    await db.refresh(quiet_booking)
+    assert quiet_booking.status == "active" and quiet_booking.idle_warnings == 0
+
+
 async def test_idle_job_skips_standalone(db, store, make_user, make_server):
     user = await make_user()
     server = await make_server(kind="standalone")
@@ -219,6 +242,20 @@ async def test_spike_alert_once_per_spike(db, store, shared_pair):
     await _snap(db, server.id, now, cpu=100.0)
     assert await spike_check(db, store, now) == 1
     assert len(await _items(db)) == 4
+
+
+async def test_spike_check_does_not_lock_unwritten_bookings(sessionmaker, box, shared_pair, db):
+    server, (_ana, first), (_bea, _second) = shared_pair
+    await db.commit()
+    async with sessionmaker() as holder, sessionmaker() as s:
+        # Another transaction holds the non-shared booking (e.g. a "still using it" ack).
+        await holder.execute(
+            select(Booking).where(Booking.id == first.id).with_for_update()
+        )
+        await s.execute(text("SET LOCAL lock_timeout = '2s'"))
+        assert await spike_check(s, SettingsStore(s, box), L("2026-11-10T10:30")) == 0
+        await s.rollback()
+        await holder.rollback()
 
 
 # --- lifecycle ----------------------------------------------------------------------------------
@@ -334,6 +371,45 @@ async def test_shareable_flapping_does_not_post_freed(db, store, make_user, make
     assert len(await _texts(db, watcher.telegram_id)) == 1
 
 
+async def test_shareable_to_available_posts_freed_once(db, store, make_user, make_server):
+    await _configure_topic(store)
+    owner = await make_user()
+    server = await make_server(
+        name="gpu-06", kind="grafana", has_gpu=True, gpu_count=1, shareable=True
+    )
+    await _book(db, owner, server, L("2026-11-10T09:00"), L("2026-11-10T12:00"))
+    await _snap(db, server.id, L("2026-11-10T09:30"), cpu=5.0)
+    await booking_lifecycle(db, store, L("2026-11-10T09:30"))
+    srv = await db.get(Server, server.id)
+    assert srv.last_status_code == "shareable"
+    await booking_lifecycle(db, store, L("2026-11-10T12:00"))
+    await db.refresh(srv)
+    assert srv.last_status_code == "available"
+    await booking_lifecycle(db, store, L("2026-11-10T12:05"))
+    assert await _topic_texts(db) == ["🟢 gpu-06 is now free."]
+
+
+async def test_lifecycle_locks_servers_before_bookings(sessionmaker, box, make_user, make_server,
+                                                        db, store):
+    user = await make_user()
+    server = await make_server(name="cpu-10")
+    await _book(db, user, server, L("2026-11-10T10:00"), L("2026-11-10T12:00"), "cpu")
+    await booking_lifecycle(db, store, L("2026-11-10T10:50"))  # status settles: free soon
+    await db.commit()
+    async with sessionmaker() as job, sessionmaker() as other:
+        # Status unchanged, so only the end reminder (a booking row) is written.
+        await booking_lifecycle(job, SettingsStore(job, box), L("2026-11-10T11:00"))
+        # The job (uncommitted) holds the server row, so a booking write path that locks the
+        # server first waits here instead of deadlocking on a booking row later.
+        with pytest.raises(DBAPIError) as e:
+            await other.execute(
+                select(Server).where(Server.id == server.id).with_for_update(nowait=True)
+            )
+        assert "55P03" in str(e.value.orig.sqlstate)
+        await other.rollback()
+        await job.rollback()
+
+
 # --- membership ---------------------------------------------------------------------------------
 
 
@@ -373,3 +449,26 @@ async def test_run_job_swallows_exceptions(sessionmaker, caplog):
     async with sessionmaker() as db:
         names = (await db.scalars(select(User.display_name))).all()
     assert names == ["real"]
+
+
+async def test_run_job_survives_failing_rollback(caplog):
+    class BrokenSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def commit(self):
+            raise AssertionError("not reached")
+
+        async def rollback(self):
+            raise ConnectionError("connection lost")
+
+    async def boom(db, now):
+        raise RuntimeError("kaput")
+
+    with caplog.at_level(logging.ERROR):
+        await run_job("boom", boom, lambda: BrokenSession())
+    assert "job boom failed" in caplog.text
+    assert "rollback after job boom failed" in caplog.text
