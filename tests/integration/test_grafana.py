@@ -6,7 +6,8 @@ import pytest
 import respx
 
 from app.integrations.grafana import (
-    DEFAULT_QUERIES, GrafanaClient, GrafanaError, MetricsUnavailable, fetch_usage,
+    DEFAULT_QUERIES, DiscoveredHost, GrafanaClient, GrafanaError, MetricsUnavailable,
+    discover_hosts, fetch_usage,
 )
 
 BASE = "http://grafana.test"
@@ -145,3 +146,99 @@ async def test_instance_regex_escaped_only_in_regex_matchers():
     util = next(e for e in seen if e.startswith("DCGM_FI_DEV_GPU_UTIL"))
     assert 'instance=~"a\\\\.b(:.*)?"' in cpu
     assert 'Hostname="a.b"' in util
+
+
+# --- discovery ------------------------------------------------------------------------------
+
+HOSTS_Q = "count by (instance)"
+GPUS_Q = "count by (Hostname)"
+
+
+async def _discover(mapping, gpu_status=200):
+    def side(request):
+        import json
+        expr = json.loads(request.content)["queries"][0]["expr"]
+        if GPUS_Q in expr and gpu_status != 200:
+            return httpx.Response(gpu_status, json={"message": "boom"})
+        for needle, frames in mapping:
+            if needle in expr:
+                return reply(*frames)
+        return reply()
+
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=side)
+        return await discover_hosts(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES)
+
+
+def test_discovery_queries_have_defaults():
+    assert DEFAULT_QUERIES["discover_hosts"] == (
+        'count by (instance) (node_cpu_seconds_total{mode="idle"})')
+    assert DEFAULT_QUERIES["discover_gpus"] == 'count by (Hostname) (DCGM_FI_DEV_GPU_UTIL)'
+
+
+async def test_discover_strips_port_and_reads_gpu_count():
+    hosts = await _discover([
+        (HOSTS_Q, [frame(32, {"instance": "gpu-01:9100"}), frame(8, {"instance": "cpu-02:9100"})]),
+        (GPUS_Q, [frame(4, {"Hostname": "gpu-01"})]),
+    ])
+    assert list(hosts) == [DiscoveredHost("cpu-02", "cpu-02", 0),
+                           DiscoveredHost("gpu-01", "gpu-01", 4)]
+    assert hosts.gpu_error is None
+
+
+async def test_discover_gpu_match_case_insensitive_and_short_vs_fqdn():
+    hosts = await _discover([
+        (HOSTS_Q, [frame(1, {"instance": "GPU-01.lab.local:9100"}),
+                   frame(1, {"instance": "gpu-02:9100"}),
+                   frame(1, {"instance": "gpu-03.lab:9100"})]),
+        (GPUS_Q, [frame(2, {"Hostname": "gpu-01"}),
+                  frame(8, {"Hostname": "GPU-02.lab.local"}),
+                  frame(1, {"Hostname": "gpu-03.LAB"})]),
+    ])
+    assert {h.instance: h.gpu_count for h in hosts} == {
+        "GPU-01.lab.local": 2, "gpu-02": 8, "gpu-03.lab": 1}
+
+
+async def test_discover_ip_instances_do_not_match_by_first_label():
+    hosts = await _discover([
+        (HOSTS_Q, [frame(1, {"instance": "10.0.0.5:9100"})]),
+        (GPUS_Q, [frame(2, {"Hostname": "10"}), frame(4, {"Hostname": "10.0.0.6"})]),
+    ])
+    assert list(hosts) == [DiscoveredHost("10.0.0.5", "10.0.0.5", 0)]
+
+
+async def test_discover_gpu_query_failure_gives_zero_and_note():
+    hosts = await _discover([(HOSTS_Q, [frame(1, {"instance": "gpu-01:9100"})])], gpu_status=500)
+    assert list(hosts) == [DiscoveredHost("gpu-01", "gpu-01", 0)]
+    assert isinstance(hosts.gpu_error, GrafanaError)
+
+
+async def test_discover_dedupes_and_sorts():
+    hosts = await _discover([
+        (HOSTS_Q, [frame(1, {"instance": "b:9100"}), frame(1, {"instance": "a:9100"}),
+                   frame(1, {"instance": "b:9101"}), frame(1, {"instance": "B"}),
+                   frame(1, {"instance": ""}), frame(1, {"job": "no-instance"})]),
+    ])
+    assert [h.instance for h in hosts] == ["a", "b"]
+
+
+async def test_discover_nothing_returns_empty_list():
+    hosts = await _discover([])
+    assert list(hosts) == [] and hosts.gpu_error is None
+
+
+async def test_discover_ignores_garbage_gpu_values():
+    bad = {"schema": {"fields": [{"name": "Time"}, {"name": "Value", "labels": {"Hostname": "g"}}]},
+           "data": {"values": [[1], ["NaN"]]}}
+    hosts = await _discover([
+        (HOSTS_Q, [frame(1, {"instance": "g:9100"}), frame(1, {"instance": "h:9100"})]),
+        (GPUS_Q, [bad, frame(-3, {"Hostname": "h"})]),
+    ])
+    assert {h.instance: h.gpu_count for h in hosts} == {"g": 0, "h": 0}
+
+
+async def test_discover_hosts_error_propagates():
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(return_value=httpx.Response(502))
+        with pytest.raises(GrafanaError):
+            await discover_hosts(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES)

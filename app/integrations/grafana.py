@@ -1,3 +1,4 @@
+import ipaddress
 import math
 import re
 from dataclasses import dataclass
@@ -12,6 +13,9 @@ DEFAULT_QUERIES: dict[str, str] = {
     "ram": '100 * (1 - node_memory_MemAvailable_bytes{instance=~"{instance_re}(:.*)?"} / node_memory_MemTotal_bytes{instance=~"{instance_re}(:.*)?"})',
     "gpu_util": 'DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}',
     "gpu_mem": '100 * DCGM_FI_DEV_FB_USED{Hostname="{instance}"} / (DCGM_FI_DEV_FB_USED{Hostname="{instance}"} + DCGM_FI_DEV_FB_FREE{Hostname="{instance}"})',
+    # Discovery ("Import from Grafana"): one series per host, labelled `instance` / `Hostname`.
+    "discover_hosts": 'count by (instance) (node_cpu_seconds_total{mode="idle"})',
+    "discover_gpus": 'count by (Hostname) (DCGM_FI_DEV_GPU_UTIL)',
 }
 
 
@@ -154,3 +158,89 @@ async def fetch_usage(client: GrafanaClient, ds_uid: str, queries: dict[str, str
                 raise MetricsUnavailable(f"duplicate GPU labels for {instance}")
         gpus = tuple(GpuUsage(u.value, m.value) for u, m in zip(util, mem))
     return ServerUsage(ts=now, cpu_pct=cpu.value, ram_pct=ram.value, gpus=gpus)
+
+
+# --- discovery ------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DiscoveredHost:
+    instance: str  # host part of the `instance` label (what Server.grafana_instance stores)
+    name: str      # suggested server name
+    gpu_count: int
+
+
+class DiscoveredHosts(list):
+    """The hosts found, plus why the GPU counts could not be read (None if they could)."""
+
+    def __init__(self, hosts=(), gpu_error: Exception | None = None):
+        super().__init__(hosts)
+        self.gpu_error = gpu_error
+
+
+def strip_port(instance: str) -> str:
+    """`host:9100` -> `host`; `[::1]:9100` -> `[::1]`; bare IPv6 addresses are left alone."""
+    instance = instance.strip()
+    if instance.startswith("["):
+        return re.sub(r"(?<=\]):\d+$", "", instance)
+    if instance.count(":") == 1:
+        return re.sub(r":\d+$", "", instance)
+    return instance
+
+
+def _is_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return True
+
+
+def _short(host: str) -> str | None:
+    """First DNS label of a hostname (None for IP addresses)."""
+    return None if _is_ip(host) else host.split(".", 1)[0].lower()
+
+
+def _gpu_counts(series: list[Series]) -> tuple[dict[str, int], dict[str, int | None]]:
+    exact: dict[str, int] = {}
+    short: dict[str, int | None] = {}  # None marks an ambiguous short name
+    for s in series:
+        host = s.labels.get("Hostname", "").strip()
+        if not host:
+            continue
+        n = max(0, int(round(s.value)))
+        exact[host.lower()] = n
+        key = _short(host)
+        if key is not None:
+            short[key] = None if key in short and short[key] != n else n
+    return exact, short
+
+
+async def discover_hosts(client: GrafanaClient, ds_uid: str,
+                         queries: dict[str, str]) -> DiscoveredHosts:
+    """List node-exporter hosts with their DCGM GPU count.
+
+    A failing GPU query never breaks host discovery: every count is 0 and the error is kept on
+    the result (``gpu_error``). Errors from the hosts query propagate (GrafanaError).
+    """
+    host_series = await client.instant_query(ds_uid, queries["discover_hosts"])
+    gpu_error: Exception | None = None
+    try:
+        gpu_series = await client.instant_query(ds_uid, queries["discover_gpus"])
+    except GrafanaError as e:
+        gpu_series, gpu_error = [], e
+    exact, short = _gpu_counts(gpu_series)
+
+    seen: dict[str, str] = {}
+    for s in host_series:
+        host = strip_port(s.labels.get("instance", ""))
+        if host and host.lower() not in seen:
+            seen[host.lower()] = host
+    hosts = []
+    for host in seen.values():
+        count = exact.get(host.lower())
+        if count is None and (key := _short(host)) is not None:
+            count = short.get(key)
+        hosts.append(DiscoveredHost(host, host, count or 0))
+    hosts.sort(key=lambda h: (h.name.lower(), h.name))
+    return DiscoveredHosts(hosts, gpu_error)
