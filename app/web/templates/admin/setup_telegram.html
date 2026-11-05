@@ -3,7 +3,7 @@
 {% block admin_content %}
 <section class="panel">
   <h1>Step 1 of 4 — Telegram bot</h1>
-  <p>Create a bot with <a href="https://t.me/BotFather">@BotFather</a>, then turn off its group privacy (<code>/setprivacy</code> → Disable) so it can see topic names. Paste the bot token here.</p>
+  <p>Create a bot with <a href="https://t.me/BotFather">@BotFather</a> and paste its token here. Keep the default privacy mode (on): the bot only needs to read the commands sent to it.</p>
   {% if error %}<div class="banner banner--error">{{ error }}</div>{% endif %}
   {% if bot_username %}<p class="muted">Current bot: @{{ bot_username }}</p>{% endif %}
   <form method="post" action="/admin/setup/telegram" class="form">

@@ -19,7 +19,7 @@
         {% endfor %}
       </select>
     </label>
-    <p class="muted">Topics appear here once the bot has seen a message in them.</p>
+    <p class="muted">A topic appears here after <code>/bind</code> or another bot command has been sent in it. With privacy mode on, the bot does not see ordinary messages.</p>
     <fieldset>
       <legend>Post to the topic</legend>
       {% for key, label, on in telegram.posts %}

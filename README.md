@@ -32,11 +32,24 @@ The web UI listens on port 8000. The only configuration is `DATABASE_URL`
 
    Open `http://<host>:8000/admin` (it redirects to `/admin/setup`) and enter it.
 2. Telegram token: create a bot with BotFather and paste the token.
-3. Add the bot to your group as an administrator. In BotFather run
-   `/setprivacy` -> your bot -> Disable (privacy mode off). The admin who will
-   send `/bind` must have "Remain anonymous" disabled in the group.
+3. Add the bot to your group as a normal member: do **not** make it an admin, and
+   leave privacy mode on (the BotFather default; do not run `/setprivacy`). The
+   bot only needs to read its own commands and post in the booking topic.
 4. Open `/admin/setup/bind`, then within 15 minutes send `/bind` in the
-   machine-booking topic. Confirm the group name shown in the page.
+   machine-booking topic (if the group has other bots, send `/bind@<your_bot>`).
+   Confirm the group name shown in the page. You must be a group admin, and your
+   admin rights must not have "Remain anonymous" turned on, or the bot cannot
+   tell who sent `/bind`.
+
+   `/bind` also registers the topic for the topic dropdown under Admin ->
+   Integrations. With privacy mode on the bot does not see ordinary messages,
+   so a topic only appears there after `/bind` or another bot command has been
+   sent in it.
+
+   The bot deletes its own `/bind` confirmation after 30 seconds. It cannot
+   delete your `/bind` message, so delete that by hand if you like. Letting the
+   bot delete it would mean making it an admin with "Delete messages", and that
+   also lets it read every message in the group, so it is not recommended.
 5. Log in with Telegram as a group admin (see "Logging in" below).
 6. Grafana: enter the URL and a token (a read-only service-account token is
    preferred; user/password also works), press Test, then choose the datasource.

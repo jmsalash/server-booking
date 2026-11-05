@@ -148,6 +148,17 @@ async def test_bind_page_opens_window(client, code, db, store):
     assert datetime.fromisoformat(until) == NOW + timedelta(minutes=15)
 
 
+async def test_wizard_telegram_text_is_least_privilege(client, code):
+    await enter_code(client, code)
+    page = (await client.get("/admin/setup/telegram")).text
+    assert "/setprivacy" not in page and "Disable" not in page
+    await client.post("/admin/setup/telegram", data={"token": "123:good"})
+    page = (await client.get("/admin/setup/bind")).text
+    assert "normal member" in page and "Do not make it an admin" in page
+    assert "privacy must be off" not in page
+    assert "/bind@test_bot" in page and "30 seconds" in page
+
+
 async def test_bind_status_completes_setup(client, code, db, store):
     await enter_code(client, code)
     await client.post("/admin/setup/telegram", data={"token": "123:good"})
