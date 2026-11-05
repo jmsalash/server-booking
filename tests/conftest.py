@@ -110,3 +110,26 @@ async def make_server(db):
         return server
 
     return factory
+
+
+@pytest.fixture
+def fake_cal():
+    from tests.fakes import FakeCalendar
+
+    return FakeCalendar()
+
+
+@pytest_asyncio.fixture
+async def booking(db, make_user, make_server):
+    from datetime import datetime, timedelta, timezone
+
+    user = await make_user(display_name="Ana Rossi")
+    server = await make_server(name="gpu-01", has_gpu=True, gpu_count=1)
+    start = datetime(2026, 11, 6, 9, 0, tzinfo=timezone.utc)
+    b = app.models.Booking(
+        user_id=user.id, server_id=server.id, start_at=start,
+        end_at=start + timedelta(hours=4), resource="cpu_gpu",
+    )
+    db.add(b)
+    await db.flush()
+    return b
