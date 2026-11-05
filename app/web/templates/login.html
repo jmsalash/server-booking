@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Log in — Server booking{% endblock %}
+{% block content %}
+<section class="panel login">
+  <h1>Log in</h1>
+  {% if not configured %}
+  <p>The system is not set up yet.</p>
+  <p><a href="/admin/setup">Go to setup</a></p>
+  {% else %}
+  <p><a class="button" href="{{ link }}" target="_blank" rel="noopener">Log in with Telegram</a></p>
+  <p>Telegram will ask you to confirm — tap “Yes, log me in”.</p>
+  <div hx-get="/login/poll/{{ token }}" hx-trigger="every 2s" hx-swap="outerHTML">
+    <p class="muted">Waiting for confirmation…</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

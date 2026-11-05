@@ -20,6 +20,7 @@ dependencies = [
   "google-api-python-client",
   "google-auth",
   "apscheduler>=3.10,<4",
+  "itsdangerous",
 ]
 
 [project.optional-dependencies]

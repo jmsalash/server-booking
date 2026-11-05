@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Book — Server booking{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Book a server</h1>
+  {% if error %}<div class="banner banner--error">{{ error }}</div>{% endif %}
+  {% if share_with %}<div class="banner banner--warn">This server is in use by {{ share_with }}. Resources will be shared.</div>{% endif %}
+  {% if not servers %}
+  <p class="muted">No servers are available for booking.</p>
+  {% else %}
+  <form method="post" action="/book" class="form">
+    <label>Server
+      <select name="server_id" hx-get="/book" hx-trigger="change" hx-target="body" hx-push-url="true">
+        {% for s in servers %}
+        <option value="{{ s.id }}" {% if selected and s.id == selected.id %}selected{% endif %}>{{ s.name }}{% if s.has_gpu %} (GPU){% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Start <input type="datetime-local" name="start" step="3600" value="{{ values.start }}" required></label>
+    <label>End <input type="datetime-local" name="end" step="3600" value="{{ values.end }}" required></label>
+    <fieldset>
+      <legend>Resources</legend>
+      <label><input type="radio" name="resource" value="cpu" {% if values.resource != "cpu_gpu" %}checked{% endif %}> CPU only</label>
+      {% if selected and selected.has_gpu %}
+      <label><input type="radio" name="resource" value="cpu_gpu" {% if values.resource == "cpu_gpu" %}checked{% endif %}> CPU + GPU</label>
+      {% endif %}
+    </fieldset>
+    <p class="muted">Times are in {{ tz }}; bookings start and end on the hour.</p>
+    {% if share_with %}
+    <input type="hidden" name="confirm_shared" value="1">
+    <button type="submit">Book and share</button>
+    {% else %}
+    <button type="submit">Book</button>
+    {% endif %}
+  </form>
+  {% endif %}
+</section>
+{% if selected %}
+<section class="panel">
+  <h2>{{ selected.name }} — next 14 days</h2>
+  {% if timeline %}
+  <ul class="timeline">
+    {% for b in timeline %}
+    <li>{{ b.start|day_hm(tz) }} – {{ b.end|day_hm(tz) }} · {{ b.user_name }} · {{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}{% if b.is_shared %} · shared{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No bookings in the next 14 days.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% include "_legend.html" %}
+{% endblock %}

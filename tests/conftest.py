@@ -72,10 +72,14 @@ async def store(db, box):
     return SettingsStore(db, box)
 
 
+@pytest.fixture
+def web_app(sessionmaker, tmp_path):
+    return create_app(sessionmaker, data_dir=tmp_path)
+
+
 @pytest_asyncio.fixture
-async def client(sessionmaker, tmp_path):
-    app = create_app(sessionmaker, data_dir=tmp_path)
-    transport = httpx.ASGITransport(app=app)
+async def client(web_app):
+    transport = httpx.ASGITransport(app=web_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 

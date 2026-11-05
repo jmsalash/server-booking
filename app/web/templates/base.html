@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Server booking{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">Server booking</a>
+    {% if user %}
+    <nav>
+      <a href="/">Board</a>
+      <a href="/book">Book</a>
+      <a href="/me">My bookings</a>
+      {% if user.is_admin %}<a href="/admin">Admin</a>{% endif %}
+      <span class="who">{{ user.display_name }}</span>
+      <form method="post" action="/logout" class="inline"><button type="submit" class="link">Log out</button></form>
+    </nav>
+    {% endif %}
+  </header>
+  {% if user and user.dm_blocked %}
+  <div class="banner banner--warn">Unblock the bot in Telegram to receive notifications.</div>
+  {% endif %}
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

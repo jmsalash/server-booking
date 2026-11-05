@@ -1,0 +1,5 @@
+<ul class="legend">
+  {% for code, label, meaning in legend %}
+  <li><span class="dot dot--{{ code }}"></span><strong>{{ label }}</strong> <span class="muted">{{ meaning }}</span></li>
+  {% endfor %}
+</ul>

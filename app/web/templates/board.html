@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+{% if monitoring_down %}
+<div class="banner banner--warn">Monitoring is down — usage data is stale, so no server is shown as shareable.</div>
+{% endif %}
+{% include "_legend.html" %}
+<div hx-get="/board/cards" hx-trigger="every 60s" hx-swap="innerHTML">
+  {% include "_board_cards.html" %}
+</div>
+{% endblock %}
