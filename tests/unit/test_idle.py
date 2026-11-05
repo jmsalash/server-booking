@@ -131,3 +131,11 @@ def test_window_across_dst_end():
     minutes = int((end - start).total_seconds() // 60) + 5
     res = drive(start, minutes, quiet)
     assert events(res) == [("Mon 2026-10-26T10:00", WARN)]
+
+
+def test_cpu_gpu_booking_with_no_gpu_data_is_missing_data():
+    no_gpu = lambda now, i: ServerUsage(now, 2.0, 30.0, ())
+    state = IdleState(2, None, None)
+    res = drive(L("2026-11-10T09:00"), 600, no_gpu, resource="cpu_gpu", state=state)
+    assert events(res) == []
+    assert all(d.state == IdleState(2, None, None) for n, d in res)

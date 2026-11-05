@@ -51,10 +51,16 @@ def evaluate_idle(
     resource: str,
     rules: Rules,
 ) -> IdleDecision:
-    if latest is None or is_stale(latest.ts, now, rules):
+    missing = (
+        latest is None
+        or is_stale(latest.ts, now, rules)
+        or (resource == "cpu_gpu" and not latest.gpus)
+    )
+    if missing:
         return IdleDecision(
             IdleAction.NONE, IdleState(state.warnings, None, None), None
         )
+    assert latest is not None
     if not _is_quiet(state, latest, resource, rules):
         return IdleDecision(IdleAction.NONE, IdleState(0, None, None), None)
     if state.idle_since is None:
