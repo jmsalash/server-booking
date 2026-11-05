@@ -129,3 +129,15 @@ async def test_telegram_items_wait_when_no_bot(worker, db):
     await worker.process_outbox(db, NOW)
     item = (await db.scalars(select(OutboxItem))).one()
     assert item.done_at is None
+
+
+async def test_corrupt_secret_does_not_block_reconcile(worker, app_log, sessionmaker, box):
+    from app.models import Setting
+
+    await _set_token(sessionmaker, box, "tok1")
+    async with sessionmaker() as s:
+        s.add(Setting(key=K.GRAFANA_PASSWORD, value={"enc": "garbage"}, is_secret=True))
+        await s.commit()
+    await worker.reconcile(NOW)
+    assert worker.bot_app.token == "tok1"
+    assert worker.grafana is None

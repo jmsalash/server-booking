@@ -38,25 +38,44 @@ class Worker:
         self.calendar_handlers: dict = {}
         self._fp: dict[str, str | None] = {"bot": None, "grafana": None, "gcal": None}
         self.scheduler: AsyncIOScheduler | None = None
+        self._failed: dict[str, str] = {}
 
     # ---- reconcile -------------------------------------------------------
-    async def reconcile(self, now: datetime) -> None:
+    async def _read(self, *keys: str) -> list | None:
+        """Read settings; an unreadable one (e.g. undecryptable secret) -> None, logged by key only."""
+        out = []
         async with self.sessionmaker() as db:
             store = SettingsStore(db, self.box)
-            token = await store.get(K.TG_TOKEN)
-            gr = [await store.get(k) for k in (
+            for k in keys:
+                try:
+                    out.append(await store.get(k))
+                except Exception as e:  # noqa: BLE001
+                    log.error("setting %s unreadable (%s); treating component as not configured",
+                              k, type(e).__name__)
+                    return None
+        return out
+
+    async def reconcile(self, now: datetime) -> None:
+        components = (
+            ("bot", self._reconcile_bot, (K.TG_TOKEN,)),
+            ("grafana", self._reconcile_grafana, (
                 K.GRAFANA_URL, K.GRAFANA_USER, K.GRAFANA_PASSWORD, K.GRAFANA_TOKEN,
-                K.GRAFANA_DS_UID)]
-            gcal = [await store.get(K.GCAL_SA_JSON), await store.get(K.GCAL_CALENDAR_ID)]
-        for name, fn, args in (
-            ("bot", self._reconcile_bot, (token,)),
-            ("grafana", self._reconcile_grafana, (gr,)),
-            ("gcal", self._reconcile_gcal, (gcal,)),
-        ):
+                K.GRAFANA_DS_UID)),
+            ("gcal", self._reconcile_gcal, (K.GCAL_SA_JSON, K.GCAL_CALENDAR_ID)),
+        )
+        for name, fn, keys in components:
             try:
-                await fn(*args)
-            except Exception:
-                log.exception("reconcile %s failed; will retry", name)
+                values = await self._read(*keys)
+                if values is None:
+                    values = [None] * len(keys)
+                await fn(*([values[0]] if name == "bot" else [values]))
+            except Exception as e:  # noqa: BLE001
+                fp = _h(name, *(values if values else ()))
+                if self._failed.get(name) != fp:  # log once per settings change
+                    self._failed[name] = fp
+                    log.error("reconcile %s failed (%s); will retry", name, type(e).__name__)
+            else:
+                self._failed.pop(name, None)
 
     async def _reconcile_bot(self, token: str | None) -> None:
         fp = _h(token) if token else None
@@ -179,7 +198,10 @@ class Worker:
                 loop.add_signal_handler(sig, stop.set)
             except NotImplementedError:
                 pass
-        await self.reconcile(utcnow())
+        try:
+            await self.reconcile(utcnow())
+        except Exception as e:  # noqa: BLE001
+            log.error("startup reconcile failed (%s)", type(e).__name__)
         self.scheduler = self.build_scheduler()
         self.scheduler.start()
         try:
@@ -191,6 +213,8 @@ class Worker:
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    for noisy in ("httpx", "httpcore"):  # their INFO logs contain URLs with the bot token
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     data_dir = Path(os.environ.get("DATA_DIR", "/data"))
     box = SecretBox(load_or_create_key(data_dir / "secret.key"))
     engine = make_engine(os.environ["DATABASE_URL"])
