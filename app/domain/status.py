@@ -34,8 +34,9 @@ def _hm(dt: datetime, tz: ZoneInfo) -> str:
     return dt.astimezone(tz).strftime("%H:%M")
 
 
-def _day_hm(dt: datetime, tz: ZoneInfo) -> str:
-    local = dt.astimezone(tz)
+def format_day_hm(dt: datetime, tz: str | ZoneInfo) -> str:
+    """`ddd DD HH:MM` in the given timezone (fixed English day abbreviations)."""
+    local = dt.astimezone(ZoneInfo(tz) if isinstance(tz, str) else tz)
     return f"{_DAYS[local.weekday()]} {local.day:02d} {local:%H:%M}"
 
 
@@ -71,7 +72,7 @@ def compute_status(
         elif busy_until - now <= soon:
             code, label = StatusCode.FREE_SOON, f"Free soon (at {_hm(busy_until, tz)})"
         else:
-            code, label = StatusCode.BOOKED, f"Booked until {_day_hm(busy_until, tz)}"
+            code, label = StatusCode.BOOKED, f"Booked until {format_day_hm(busy_until, tz)}"
         return ServerStatus(code, label, busy_until, next_busy, holders)
 
     next_busy = next((x.start for x in ordered if x.start > now), None)
