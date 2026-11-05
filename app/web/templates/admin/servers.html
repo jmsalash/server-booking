@@ -1,0 +1,37 @@
+{% extends "admin/base.html" %}
+{% block title %}Servers — Admin{% endblock %}
+{% block admin_content %}
+<section class="panel">
+  <h1>Servers</h1>
+  {% if notice %}<div class="banner banner--warn">{{ notice }}</div>{% endif %}
+  <p><a class="button" href="/admin/servers/new">Add server</a></p>
+  {% if servers %}
+  <table class="list">
+    <thead><tr><th>Name</th><th>Hostname</th><th>Monitoring</th><th>GPUs</th><th>Shareable</th><th>Enabled</th><th></th></tr></thead>
+    <tbody>
+    {% for s in servers %}
+    <tr>
+      <td>{{ s.name }}</td>
+      <td>{{ s.hostname }}</td>
+      <td>{% if s.kind == "grafana" %}Grafana{% if s.grafana_instance %} ({{ s.grafana_instance }}){% endif %}{% else %}standalone{% endif %}</td>
+      <td>{{ s.gpu_count if s.has_gpu else "—" }}</td>
+      <td>{{ "yes" if s.shareable else "no" }}</td>
+      <td>{{ "yes" if s.enabled else "no" }}</td>
+      <td class="actions">
+        <a href="/admin/servers/{{ s.id }}">Edit</a>
+        {% if s.kind == "grafana" %}
+        <form method="post" action="/admin/servers/{{ s.id }}/fetch" class="inline"><button type="submit">Fetch usage now</button></form>
+        {% endif %}
+      </td>
+    </tr>
+    {% if fetched and fetched.server_id == s.id %}
+    <tr><td colspan="7"><div class="banner {{ 'banner--warn' if fetched.ok else 'banner--error' }}">{{ fetched.text }}</div></td></tr>
+    {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No servers yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

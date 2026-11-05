@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Admin — Server booking{% endblock %}
+{% block content %}
+{% if user and user.is_admin %}
+<nav class="subnav">
+  {% for href, label, key in [("/admin/integrations", "Integrations", "integrations"), ("/admin/servers", "Servers", "servers"), ("/admin/rules", "Rules", "rules"), ("/admin/bookings", "Bookings", "bookings"), ("/admin/health", "Health", "health"), ("/admin/audit", "Audit", "audit")] %}
+  <a href="{{ href }}"{% if section == key %} class="current"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+{% block admin_content %}{% endblock %}
+{% endblock %}

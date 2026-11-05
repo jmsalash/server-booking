@@ -14,7 +14,7 @@ from app.crypto import SecretBox, load_or_create_key
 from app.db import make_engine, make_sessionmaker
 from app.services import setup
 from app.settings_store import SettingsStore
-from app.web import portal
+from app.web import admin, portal, setup_routes
 from app.web.deps import LoginRequired, make_login_signer, make_signer
 
 setup_log = logging.getLogger("app.setup")
@@ -57,6 +57,11 @@ def create_app(
     app.state.box = SecretBox(key)
     app.state.signer = make_signer(key)
     app.state.login_signer = make_login_signer(key)
+    app.state.setup_signer = setup_routes.make_setup_signer(key)
+    app.state.setup_attempts = {}  # client ip -> wrong setup-code attempt times
+    app.state.telegram_factory = setup_routes.default_telegram_factory
+    app.state.grafana_factory = admin.default_grafana_factory
+    app.state.calendar_factory = admin.default_calendar_factory
 
     @app.middleware("http")
     async def reject_foreign_origin(request: Request, call_next):
@@ -73,6 +78,12 @@ def create_app(
             return Response(status_code=204, headers={"HX-Redirect": "/login"})
         return RedirectResponse("/login", status_code=303)
 
+    @app.exception_handler(admin.SetupRequired)
+    async def _setup_required(request: Request, exc: admin.SetupRequired):
+        if request.headers.get("hx-request"):
+            return Response(status_code=204, headers={"HX-Redirect": "/admin/setup"})
+        return RedirectResponse("/admin/setup", status_code=303)
+
     @app.exception_handler(PermissionError)
     async def _forbidden(request: Request, exc: PermissionError):
         return HTMLResponse("You are not allowed to do that.", status_code=403)
@@ -85,6 +96,8 @@ def create_app(
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.include_router(portal.router)
+    app.include_router(setup_routes.router)
+    app.include_router(admin.router)
 
     @app.get("/healthz")
     async def healthz():

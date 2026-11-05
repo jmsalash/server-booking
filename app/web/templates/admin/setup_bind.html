@@ -1,0 +1,14 @@
+{% extends "admin/base.html" %}
+{% block title %}Setup: bind group — Server booking{% endblock %}
+{% block admin_content %}
+<section class="panel">
+  <h1>Step 2 of 4 — Bind the group</h1>
+  <ol>
+    <li>Add {% if bot_username %}@{{ bot_username }}{% else %}the bot{% endif %} to your lab's Telegram group and make it an <strong>admin</strong> (group privacy must be off).</li>
+    <li>In the machine-booking topic, send <code>/bind</code>. Only group admins can do this.</li>
+    <li>If you are an anonymous admin, first disable “Remain anonymous” in your admin rights — the bot cannot tell who sent <code>/bind</code> otherwise.</li>
+  </ol>
+  <p class="muted">The bot accepts the first <code>/bind</code> for 15 minutes after this page was opened.</p>
+  {{ status_html }}
+</section>
+{% endblock %}

@@ -45,3 +45,8 @@ input, select { font: inherit; padding: .3rem; }
 .timeline { padding-left: 1.2rem; }
 table.list { width: 100%; border-collapse: collapse; }
 table.list th, table.list td { text-align: left; padding: .4rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
+
+.subnav { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.subnav a.current { font-weight: 600; text-decoration: none; color: var(--fg); }
+.form--wide { max-width: 760px; }
+textarea { font: inherit; font-family: ui-monospace, monospace; font-size: .85rem; padding: .3rem; width: 100%; }

@@ -1,0 +1,87 @@
+{% extends "admin/base.html" %}
+{% block title %}Integrations — Admin{% endblock %}
+{% block admin_content %}
+<section class="panel">
+  <h1>Telegram</h1>
+  {% if errors.telegram %}<div class="banner banner--error">{{ errors.telegram }}</div>{% endif %}
+  <p>Bot: {% if telegram.bot_username %}@{{ telegram.bot_username }}{% else %}<span class="muted">not set</span>{% endif %}
+    · Group: {% if telegram.group_id is not none %}{{ telegram.group_title or telegram.group_id }}{% else %}<span class="muted">not bound</span>{% endif %}</p>
+  <form method="post" action="/admin/integrations/telegram" class="form">
+    <label>Bot token
+      <input type="password" name="token" value="" autocomplete="off" placeholder="{{ placeholder if telegram.token_set else '' }}">
+    </label>
+    <p class="muted">Leave blank to keep the saved token. A new token is checked with Telegram before it is saved.</p>
+    <label>Booking topic
+      <select name="topic_id">
+        {% if telegram.topic_id is none %}<option value="">— none —</option>{% endif %}
+        {% for t in telegram.topics %}
+        <option value="{{ t.thread_id }}" {% if t.thread_id == telegram.topic_id %}selected{% endif %}>{{ t.title }} ({{ t.thread_id }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="muted">Topics appear here once the bot has seen a message in them.</p>
+    <fieldset>
+      <legend>Post to the topic</legend>
+      {% for key, label, on in telegram.posts %}
+      <label><input type="checkbox" name="post_{{ key }}" {% if on %}checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </fieldset>
+    <button type="submit">Save Telegram settings</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h1>Grafana</h1>
+  {% if errors.grafana %}<div class="banner banner--error">{{ errors.grafana }}</div>{% endif %}
+  {% if messages.grafana %}<div class="banner banner--warn">{{ messages.grafana }}</div>{% endif %}
+  <form method="post" action="/admin/integrations/grafana" class="form form--wide">
+    <label>Grafana URL <input type="url" name="url" value="{{ grafana.url }}" placeholder="https://grafana.lab.example"></label>
+    <label>User <input name="user" value="{{ grafana.user }}" autocomplete="off"></label>
+    <label>Password <input type="password" name="password" value="" autocomplete="new-password" placeholder="{{ placeholder if grafana.password_set else '' }}"></label>
+    <label>API token (instead of user/password) <input type="password" name="token" value="" autocomplete="off" placeholder="{{ placeholder if grafana.token_set else '' }}"></label>
+    <p class="muted">Secret fields are never shown; leave them blank to keep the saved value.</p>
+    <label>Prometheus datasource
+      <select name="ds_uid">
+        <option value="">— run “Test connection” to list datasources —</option>
+        {% for d in grafana.datasources %}<option value="{{ d.uid }}" {% if d.uid == grafana.ds_uid %}selected{% endif %}>{{ d.name }} ({{ d.uid }})</option>{% endfor %}
+      </select>
+    </label>
+    <fieldset>
+      <legend>Query templates</legend>
+      <p class="muted"><code>{instance}</code> is replaced by the server's Grafana instance as-is (use it with <code>=</code>); <code>{instance_re}</code> is the regex-escaped instance (use it inside <code>=~</code>). Clear a field to restore its default.</p>
+      {% for key, q in grafana.queries.items() %}
+      <label>{{ key }} <textarea name="q_{{ key }}" rows="3">{{ q }}</textarea></label>
+      {% endfor %}
+    </fieldset>
+    <div class="actions">
+      <button type="submit" name="action" value="save">Save</button>
+      <button type="submit" name="action" value="test">Test connection</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h1>Google Calendar</h1>
+  {% if errors.calendar %}<div class="banner banner--error">{{ errors.calendar }}</div>{% endif %}
+  {% if messages.calendar %}<div class="banner banner--warn">{{ messages.calendar }}</div>{% endif %}
+  <form method="post" action="/admin/integrations/calendar" class="form" enctype="multipart/form-data">
+    <label>Service-account JSON key <input type="file" name="sa_json" accept="application/json,.json"></label>
+    {% if calendar.key_set %}<p class="muted">A key is saved ({{ placeholder }}). Leave empty to keep it.</p>{% endif %}
+    <label>Calendar id <input name="calendar_id" value="{{ calendar.calendar_id }}"></label>
+    <div class="actions">
+      <button type="submit" name="action" value="save">Save</button>
+      <button type="submit" name="action" value="test">Test</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h1>Portal</h1>
+  {% if errors.portal %}<div class="banner banner--error">{{ errors.portal }}</div>{% endif %}
+  <form method="post" action="/admin/integrations/portal" class="form">
+    <label>Portal base URL <input type="url" name="base_url" value="{{ portal_base_url }}" required></label>
+    <p class="muted">Used in bot messages that link to the portal.</p>
+    <button type="submit">Save</button>
+  </form>
+</section>
+{% endblock %}

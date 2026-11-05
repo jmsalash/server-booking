@@ -1,0 +1,25 @@
+{% extends "admin/base.html" %}
+{% block title %}Rules — Admin{% endblock %}
+{% block admin_content %}
+<section class="panel">
+  <h1>Rules</h1>
+  {% for e in errors %}<div class="banner banner--error">{{ e }}</div>{% endfor %}
+  <form method="post" action="/admin/rules" class="form">
+    {% for name in fields %}
+    {% if name == "work_days" %}
+    <fieldset>
+      <legend>{{ labels[name] }}</legend>
+      {% for d in range(7) %}
+      <label><input type="checkbox" name="work_days" value="{{ d }}" {% if d in values.work_days %}checked{% endif %}> {{ day_names[d] }}</label>
+      {% endfor %}
+    </fieldset>
+    {% elif name in ("work_start", "work_end") %}
+    <label>{{ labels[name] }} <input name="{{ name }}" value="{{ values[name] }}" pattern="[0-2][0-9]:[0-5][0-9]" placeholder="HH:MM" required></label>
+    {% else %}
+    <label>{{ labels[name] }} <input name="{{ name }}" value="{{ values[name] }}" required></label>
+    {% endif %}
+    {% endfor %}
+    <button type="submit">Save rules</button>
+  </form>
+</section>
+{% endblock %}

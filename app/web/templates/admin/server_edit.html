@@ -1,0 +1,27 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ "Edit" if server_id else "Add" }} server — Admin{% endblock %}
+{% block admin_content %}
+<section class="panel">
+  <h1>{{ "Edit " ~ values.name if server_id else "Add server" }}</h1>
+  {% for e in errors %}<div class="banner banner--error">{{ e }}</div>{% endfor %}
+  <form method="post" action="{{ '/admin/servers/%d' % server_id if server_id else '/admin/servers/new' }}" class="form">
+    <label>Name <input name="name" value="{{ values.name }}" required></label>
+    <label>Hostname <input name="hostname" value="{{ values.hostname }}" required></label>
+    <label>Monitoring
+      <select name="kind" onchange="var s=this.form.shareable; s.disabled=this.value==='standalone'; if(s.disabled) s.checked=false;">
+        {% for k in kinds %}<option value="{{ k }}" {% if values.kind == k %}selected{% endif %}>{{ "Grafana-monitored" if k == "grafana" else "Standalone (not monitored)" }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Grafana instance <input name="grafana_instance" value="{{ values.grafana_instance }}" placeholder="defaults to the hostname"></label>
+    <label><input type="checkbox" name="has_gpu" {% if values.has_gpu %}checked{% endif %}> Has GPU</label>
+    <label>GPU count <input type="number" name="gpu_count" min="0" max="64" value="{{ values.gpu_count }}"></label>
+    <label><input type="checkbox" name="shareable" {% if values.shareable %}checked{% endif %} {% if values.kind == "standalone" %}disabled{% endif %}> Shareable when lightly loaded (Grafana-monitored servers only)</label>
+    <label><input type="checkbox" name="enabled" {% if values.enabled %}checked{% endif %}> Enabled (bookable)</label>
+    <label>Notes <textarea name="notes" rows="3">{{ values.notes }}</textarea></label>
+    <div class="actions">
+      <button type="submit">Save</button>
+      <a href="/admin/servers">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

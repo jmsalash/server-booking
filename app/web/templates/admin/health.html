@@ -1,0 +1,50 @@
+{% extends "admin/base.html" %}
+{% block title %}Health — Admin{% endblock %}
+{% block admin_content %}
+<section class="panel">
+  <h1>Metrics polling</h1>
+  {% if last_poll %}
+  <p>Last poll: {{ poll_at|day_hm(tz) if poll_at else last_poll.at }} — {{ last_poll.ok }} server(s) OK, {{ last_poll.failed|length }} failed.{% if last_poll.note %} <span class="muted">{{ last_poll.note }}</span>{% endif %}</p>
+  {% if last_poll.failed %}
+  <table class="list">
+    <thead><tr><th>Server</th><th>Error</th></tr></thead>
+    <tbody>{% for name, err in last_poll.failed.items() %}<tr><td>{{ name }}</td><td>{{ err }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+  {% else %}
+  <p class="muted">The worker has not polled metrics yet.</p>
+  {% endif %}
+  <h2>Stale servers</h2>
+  {% if stale %}<ul>{% for name in stale %}<li>{{ name }}</li>{% endfor %}</ul>{% else %}<p class="muted">None.</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h1>Outbox</h1>
+  {% if outbox %}
+  <table class="list">
+    <thead><tr><th>Kind</th><th>Pending</th><th>Failed</th><th></th></tr></thead>
+    <tbody>
+    {% for kind, counts in outbox %}
+    <tr>
+      <td>{{ kind }}</td><td>{{ counts.pending }}</td><td>{{ counts.failed }}</td>
+      <td><form method="post" action="/admin/health/retry" class="inline"><input type="hidden" name="kind" value="{{ kind }}"><button type="submit">Retry now</button></form></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Nothing pending.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h1>Bot</h1>
+  {% if bot_missing %}
+  <p>Bot: not configured (missing {{ bot_missing|join(", ") }}).</p>
+  {% else %}
+  <p>Bot: configured. <span class="muted">The web app cannot see whether the worker is running.</span></p>
+  {% endif %}
+  <h2>Users who blocked the bot</h2>
+  {% if blocked %}<ul>{% for u in blocked %}<li>{{ u.display_name }}{% if u.username %} (@{{ u.username }}){% endif %}</li>{% endfor %}</ul>{% else %}<p class="muted">None.</p>{% endif %}
+</section>
+{% endblock %}

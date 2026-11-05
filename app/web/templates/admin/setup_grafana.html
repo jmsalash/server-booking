@@ -1,0 +1,35 @@
+{% extends "admin/base.html" %}
+{% block title %}Setup: Grafana — Server booking{% endblock %}
+{% block admin_content %}
+<section class="panel">
+  <h1>Step 3 of 4 — Grafana (optional)</h1>
+  <p>Usage bars, idle detection and sharing need metrics from Grafana. You can skip this and configure it later under Admin → Integrations.</p>
+  {% if error %}<div class="banner banner--error">{{ error }}</div>{% endif %}
+  {% if message %}<div class="banner banner--warn">{{ message }}</div>{% endif %}
+  <form method="post" action="/admin/setup/grafana" class="form form--wide">
+    <label>Grafana URL <input type="url" name="url" value="{{ grafana.url }}" placeholder="https://grafana.lab.example"></label>
+    <label>User <input name="user" value="{{ grafana.user }}" autocomplete="off"></label>
+    <label>Password <input type="password" name="password" value="" autocomplete="new-password" placeholder="{{ placeholder if grafana.password_set else '' }}"></label>
+    <label>API token (instead of user/password) <input type="password" name="token" value="" autocomplete="off" placeholder="{{ placeholder if grafana.token_set else '' }}"></label>
+    <p class="muted">Secret fields are never shown; leave them blank to keep the saved value.</p>
+    <label>Prometheus datasource
+      <select name="ds_uid">
+        <option value="">— run “Test connection” to list datasources —</option>
+        {% for d in grafana.datasources %}<option value="{{ d.uid }}" {% if d.uid == grafana.ds_uid %}selected{% endif %}>{{ d.name }} ({{ d.uid }})</option>{% endfor %}
+      </select>
+    </label>
+    <fieldset>
+      <legend>Query templates</legend>
+      <p class="muted"><code>{instance}</code> is replaced by the server's Grafana instance as-is (use it with <code>=</code>); <code>{instance_re}</code> is the regex-escaped instance (use it inside <code>=~</code>).</p>
+      {% for key, q in grafana.queries.items() %}
+      <label>{{ key }} <textarea name="q_{{ key }}" rows="3">{{ q }}</textarea></label>
+      {% endfor %}
+    </fieldset>
+    <div class="actions">
+      <button type="submit" name="action" value="save">Save and continue</button>
+      <button type="submit" name="action" value="test">Test connection</button>
+      <button type="submit" name="action" value="skip" formnovalidate>Skip</button>
+    </div>
+  </form>
+</section>
+{% endblock %}
