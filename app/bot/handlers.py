@@ -5,6 +5,7 @@ its own session, commits on success and rolls back on error. `build_application`
 adapts PTB updates to them.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from datetime import datetime, timezone
 import telegram
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -68,8 +69,9 @@ class BotContext:
 
 @dataclass(frozen=True)
 class Reply:
-    text: str
+    text: str | None  # None: nothing to say
     buttons: list[tuple[str, str]] | None = None
+    ephemeral: bool = False  # group chatter that should clean itself up
 
 
 @asynccontextmanager
@@ -160,24 +162,28 @@ async def on_bind(
     chat_title: str | None, now: datetime,
 ) -> Reply:
     if tg.id not in await ctx.gateway.get_admin_ids(chat_id):
-        return Reply(ADMINS_ONLY)
+        return Reply(ADMINS_ONLY, ephemeral=True)
     if thread_id is None:
-        return Reply(BIND_IN_TOPIC)
+        return Reply(BIND_IN_TOPIC, ephemeral=True)
     async with _session(ctx) as (db, store):
         group = await store.get(K.TG_GROUP_ID)
         if group is not None and group != chat_id:
-            return Reply(BOUND_ELSEWHERE)
+            return Reply(BOUND_ELSEWHERE, ephemeral=True)
         if group is None:
             # First binding: only while the setup wizard has opened a window.
             if not _window_open(await store.get(K.SETUP_BIND_OPEN_UNTIL), now):
-                return Reply(BIND_CLOSED)
+                return Reply(BIND_CLOSED, ephemeral=True)
             await store.set(K.TG_GROUP_ID, chat_id)
             if chat_title:
                 await store.set(K.TG_GROUP_TITLE, chat_title)
             await store.delete(K.SETUP_BIND_OPEN_UNTIL)
-        await store.set(K.TG_TOPIC_ID, thread_id)
+        unchanged = group == chat_id and await store.get(K.TG_TOPIC_ID) == thread_id
+        if not unchanged:
+            await store.set(K.TG_TOPIC_ID, thread_id)
         await _upsert_topic(db, thread_id, title, now)
-    return Reply(BOUND)
+    if unchanged:
+        return Reply(None, ephemeral=True)  # already bound here: stay quiet
+    return Reply(BOUND, ephemeral=True)
 
 
 async def on_group_message(
@@ -312,6 +318,38 @@ async def _reply(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE, re
     )
 
 
+EPHEMERAL_TTL = 30  # seconds before bind chatter is deleted
+
+
+async def delete_messages(bot, chat_id: int, message_ids: list[int]) -> None:
+    """Best-effort delete; a missing permission or an already-gone message is not an error."""
+    for mid in message_ids:
+        try:
+            await bot.delete_message(chat_id, mid)
+        except TelegramError as e:
+            log.info("could not delete message %s in %s: %s", mid, chat_id, e)
+
+
+def schedule_deletion(context: ContextTypes.DEFAULT_TYPE, chat_id: int, ids: list[int]) -> None:
+    async def job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        await delete_messages(ctx.bot, chat_id, ids)
+
+    if context.job_queue is not None:
+        context.job_queue.run_once(job, EPHEMERAL_TTL)
+        return
+
+    async def later() -> None:
+        await asyncio.sleep(EPHEMERAL_TTL)
+        await delete_messages(context.bot, chat_id, ids)
+
+    task = asyncio.get_running_loop().create_task(later())
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+_background: set[asyncio.Task] = set()
+
+
 def build_application(token: str, ctx: BotContext) -> Application:
     app = Application.builder().token(token).build()
     new_messages = filters.UpdateType.MESSAGE
@@ -327,7 +365,14 @@ def build_application(token: str, ctx: BotContext) -> Application:
             ctx, _tg_user(update.effective_user), msg.chat_id, _thread_id(msg),
             _topic_title(msg), msg.chat.title, clock.utcnow(),
         )
-        await _reply(update, context, reply)
+        if not reply.text:
+            return
+        sent = await context.bot.send_message(
+            msg.chat_id, reply.text, message_thread_id=_thread_id(msg),
+            reply_markup=_markup(reply.buttons),
+        )
+        if reply.ephemeral:
+            schedule_deletion(context, msg.chat_id, [sent.message_id, msg.message_id])
 
     async def command(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = update.effective_message

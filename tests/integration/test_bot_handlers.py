@@ -361,3 +361,38 @@ async def test_group_command_keeps_dm_blocked(bot_ctx, db, store, make_user):
     _member(bot_ctx)
     await _cmd(bot_ctx, "free")
     assert await _blocked(db, ANA.id) is True
+
+
+async def test_bind_same_topic_again_is_silent(bot_ctx, db, store):
+    await _configure(db, store)  # already bound to G / TOPIC
+    bot_ctx.gateway.admins_by_chat = {G: {ANA.id}}
+    r = await _bind(bot_ctx)
+    assert not r.text
+    db.expire_all()
+    assert (await db.get(TelegramTopic, TOPIC)).last_seen_at == NOW
+
+
+async def test_bind_replies_are_ephemeral(bot_ctx, db, store):
+    await _configure(db, store)
+    bot_ctx.gateway.admins_by_chat = {G: {ANA.id}}
+    r = await _bind(bot_ctx, thread_id=77, title="Other")
+    assert r.text == "✅ This topic is now the machine-booking topic." and r.ephemeral
+    r = await _bind(bot_ctx, tg=TgUser(id=556, username="bob", display_name="Bob"))
+    assert r.text == "Only group admins can do that." and r.ephemeral
+
+
+async def test_delete_messages_swallows_telegram_errors():
+    from telegram.error import BadRequest, Forbidden
+
+    from app.bot.handlers import delete_messages
+
+    class Bot:
+        calls = []
+
+        async def delete_message(self, chat_id, mid):
+            self.calls.append(mid)
+            raise BadRequest("Message to delete not found") if mid == 1 else Forbidden("no rights")
+
+    bot = Bot()
+    await delete_messages(bot, G, [1, 2])
+    assert bot.calls == [1, 2]
