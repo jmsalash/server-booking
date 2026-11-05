@@ -90,29 +90,80 @@ async def test_command_before_setup(bot_ctx):
     assert r.text == "The booking system is not set up yet."
 
 
-async def test_bind_requires_admin(bot_ctx, db):
-    r = await on_bind(bot_ctx, ANA, G, TOPIC, "Machines", NOW)
+async def _open_window(db, store, until=NOW + timedelta(minutes=10)):
+    await store.set(K.SETUP_BIND_OPEN_UNTIL, until.isoformat())
+    await db.commit()
+
+
+async def _bind(bot_ctx, chat_id=G, thread_id=TOPIC, title="Machines", chat_title="Lab", tg=ANA):
+    return await on_bind(bot_ctx, tg, chat_id, thread_id, title, chat_title, NOW)
+
+
+async def test_bind_requires_admin(bot_ctx, db, store):
+    await _open_window(db, store)
+    r = await _bind(bot_ctx)
     assert r.text == "Only group admins can do that."
     bot_ctx.gateway.admins.add(ANA.id)
-    r = await on_bind(bot_ctx, ANA, G, None, None, NOW)
+    r = await _bind(bot_ctx, thread_id=None, title=None)
     assert r.text == "Send /bind inside the machine-booking topic."
     assert await db.get(Setting, K.TG_GROUP_ID) is None
 
 
-async def test_bind_sets_group_and_topic(bot_ctx, db, box):
+async def test_bind_sets_group_and_topic(bot_ctx, db, store, box):
+    await _open_window(db, store)
     bot_ctx.gateway.admins.add(ANA.id)
-    r = await on_bind(bot_ctx, ANA, G, TOPIC, "Machines", NOW)
+    r = await _bind(bot_ctx)
     assert r.text == "✅ This topic is now the machine-booking topic."
-    store = SettingsStore(db, box)
-    assert await store.get(K.TG_GROUP_ID) == G
-    assert await store.get(K.TG_TOPIC_ID) == TOPIC
+    db.expire_all()
+    fresh = SettingsStore(db, box)
+    assert await fresh.get(K.TG_GROUP_ID) == G
+    assert await fresh.get(K.TG_TOPIC_ID) == TOPIC
+    assert await fresh.get(K.TG_GROUP_TITLE) == "Lab"
+    assert await fresh.get(K.SETUP_BIND_OPEN_UNTIL) is None  # window cleared
     topic = await db.get(TelegramTopic, TOPIC)
     assert topic.title == "Machines" and topic.last_seen_at == NOW
 
 
-async def test_bind_without_title_uses_placeholder(bot_ctx, db):
+async def test_bind_unbound_without_window_refused(bot_ctx, db):
     bot_ctx.gateway.admins.add(ANA.id)
-    await on_bind(bot_ctx, ANA, G, TOPIC, None, NOW)
+    r = await _bind(bot_ctx)
+    assert r.text == "Binding is only possible while the setup wizard is waiting for it."
+    assert await db.get(Setting, K.TG_GROUP_ID) is None
+
+
+async def test_bind_expired_window_refused(bot_ctx, db, store):
+    await _open_window(db, store, until=NOW)  # now == until: closed
+    bot_ctx.gateway.admins.add(ANA.id)
+    r = await _bind(bot_ctx)
+    assert r.text == "Binding is only possible while the setup wizard is waiting for it."
+    assert await db.get(Setting, K.TG_GROUP_ID) is None
+
+
+async def test_bind_other_group_cannot_rebind(bot_ctx, db, store, box):
+    await _configure(db, store)
+    other = -100999
+    bot_ctx.gateway.admins_by_chat = {other: {ANA.id}, G: set()}
+    r = await _bind(bot_ctx, chat_id=other, thread_id=5)
+    assert r.text == "This bot is already bound to another group."
+    db.expire_all()
+    fresh = SettingsStore(db, box)
+    assert await fresh.get(K.TG_GROUP_ID) == G and await fresh.get(K.TG_TOPIC_ID) == TOPIC
+    assert await db.get(TelegramTopic, 5) is None
+
+
+async def test_bind_same_group_admin_reselects_topic(bot_ctx, db, store, box):
+    await _configure(db, store)  # bound, no window open
+    bot_ctx.gateway.admins_by_chat = {G: {ANA.id}}
+    r = await _bind(bot_ctx, thread_id=77, title="New topic")
+    assert r.text == "✅ This topic is now the machine-booking topic."
+    db.expire_all()
+    assert await SettingsStore(db, box).get(K.TG_TOPIC_ID) == 77
+
+
+async def test_bind_without_title_uses_placeholder(bot_ctx, db, store):
+    await _open_window(db, store)
+    bot_ctx.gateway.admins.add(ANA.id)
+    await _bind(bot_ctx, title=None)
     assert (await db.get(TelegramTopic, TOPIC)).title == f"Topic #{TOPIC}"
 
 
@@ -279,3 +330,4 @@ def test_build_application_registers_handlers(bot_ctx):
     assert commands == {"start", "bind", "status", "free", "notify"}
     assert any(isinstance(h, CallbackQueryHandler) for h in handlers)
     assert any(isinstance(h, MessageHandler) for h in handlers)
+    assert app.error_handlers

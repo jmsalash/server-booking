@@ -64,8 +64,15 @@ def server_detail(card: ServerCard, tz: str, portal_url: str, now: datetime) -> 
     return "\n".join([*lines, *_footer(portal_url)])
 
 
-def idle_warning(server_name: str, n: int, max_n: int) -> str:
+def _duration(minutes: int) -> str:
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return "1 hour" if hours == 1 else f"{hours} hours"
+    return f"{minutes} minutes"
+
+
+def idle_warning(server_name: str, n: int, max_n: int, idle_min: int) -> str:
     return (
-        f"⚠️ Your booking on {server_name} has been idle for 2 hours. "
+        f"⚠️ Your booking on {server_name} has been idle for {_duration(idle_min)}. "
         f"Warning {n}/{max_n} — after {max_n} warnings the booking is released."
     )

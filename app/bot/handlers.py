@@ -8,11 +8,13 @@ adapts PTB updates to them.
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
 
 import telegram
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -32,11 +34,15 @@ from app.services.auth import LoginOutcome, TgUser
 from app.services.inventory import list_servers
 from app.settings_store import K, SettingsStore
 
+log = logging.getLogger(__name__)
+
 NOT_SET_UP = "The booking system is not set up yet."
 MEMBERS_ONLY = "This bot is for members of the lab group."
 ADMINS_ONLY = "Only group admins can do that."
 BIND_IN_TOPIC = "Send /bind inside the machine-booking topic."
 BOUND = "✅ This topic is now the machine-booking topic."
+BOUND_ELSEWHERE = "This bot is already bound to another group."
+BIND_CLOSED = "Binding is only possible while the setup wizard is waiting for it."
 LOGIN_PROMPT = (
     "🔐 Log in to the lab booking portal?\n\n"
     'Only tap the button if you just clicked "Log in" in your own browser. '
@@ -128,16 +134,38 @@ async def on_start(ctx: BotContext, tg: TgUser, payload: str | None, now: dateti
     return Reply("👋 Hi! Use /status or /free here.")
 
 
+def _window_open(value: str | None, now: datetime) -> bool:
+    if not value:
+        return False
+    try:
+        until = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    return now < until
+
+
 async def on_bind(
     ctx: BotContext, tg: TgUser, chat_id: int, thread_id: int | None, title: str | None,
-    now: datetime,
+    chat_title: str | None, now: datetime,
 ) -> Reply:
     if tg.id not in await ctx.gateway.get_admin_ids(chat_id):
         return Reply(ADMINS_ONLY)
     if thread_id is None:
         return Reply(BIND_IN_TOPIC)
     async with _session(ctx) as (db, store):
-        await store.set(K.TG_GROUP_ID, chat_id)
+        group = await store.get(K.TG_GROUP_ID)
+        if group is not None and group != chat_id:
+            return Reply(BOUND_ELSEWHERE)
+        if group is None:
+            # First binding: only while the setup wizard has opened a window.
+            if not _window_open(await store.get(K.SETUP_BIND_OPEN_UNTIL), now):
+                return Reply(BIND_CLOSED)
+            await store.set(K.TG_GROUP_ID, chat_id)
+            if chat_title:
+                await store.set(K.TG_GROUP_TITLE, chat_title)
+            await store.delete(K.SETUP_BIND_OPEN_UNTIL)
         await store.set(K.TG_TOPIC_ID, thread_id)
         await _upsert_topic(db, thread_id, title, now)
     return Reply(BOUND)
@@ -286,7 +314,7 @@ def build_application(token: str, ctx: BotContext) -> Application:
         msg = update.effective_message
         reply = await on_bind(
             ctx, _tg_user(update.effective_user), msg.chat_id, _thread_id(msg),
-            _topic_title(msg), clock.utcnow(),
+            _topic_title(msg), msg.chat.title, clock.utcnow(),
         )
         await _reply(update, context, reply)
 
@@ -303,14 +331,25 @@ def build_application(token: str, ctx: BotContext) -> Application:
 
     async def callback(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
-        reply = await on_callback(ctx, _tg_user(query.from_user), query.data or "", clock.utcnow())
-        await query.answer()
-        await query.edit_message_text(reply.text, reply_markup=_markup(reply.buttons))
+        try:
+            reply = await on_callback(
+                ctx, _tg_user(query.from_user), query.data or "", clock.utcnow()
+            )
+        finally:
+            await query.answer()  # never leave the client spinner hanging
+        try:
+            await query.edit_message_text(reply.text, reply_markup=_markup(reply.buttons))
+        except BadRequest:
+            log.warning("could not edit callback message", exc_info=True)
 
     async def group_message(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = update.effective_message
         await on_group_message(ctx, msg.chat_id, _thread_id(msg), _topic_title(msg), clock.utcnow())
 
+    async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        log.error("bot update failed: %r", update, exc_info=context.error)
+
+    app.add_error_handler(on_error)
     app.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE & new_messages))
     app.add_handler(CommandHandler("bind", bind, filters=filters.ChatType.GROUPS & new_messages))
     app.add_handler(CommandHandler(list(COMMANDS), command, filters=new_messages))

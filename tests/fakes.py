@@ -2,9 +2,10 @@ from app.integrations.telegram_gateway import BotIdentity, MemberStatus
 
 
 class FakeTelegram:
-    def __init__(self, members=None, admins=None, fail_with=None):
+    def __init__(self, members=None, admins=None, fail_with=None, admins_by_chat=None):
         self.members: dict[int, MemberStatus] = members or {}
-        self.admins: set[int] = admins or set()
+        self.admins: set[int] = admins or set()  # admins of every chat
+        self.admins_by_chat: dict[int, set[int]] = admins_by_chat or {}  # per-chat override
         self.fail_with: Exception | None = fail_with
         self.sent: list[dict] = []
 
@@ -15,6 +16,8 @@ class FakeTelegram:
         return self.members.get(user_id, MemberStatus.NOT_MEMBER)
 
     async def get_admin_ids(self, chat_id: int) -> set[int]:
+        if chat_id in self.admins_by_chat:
+            return set(self.admins_by_chat[chat_id])
         return set(self.admins)
 
     async def send_message(self, chat_id, text, thread_id=None, buttons=None) -> None:

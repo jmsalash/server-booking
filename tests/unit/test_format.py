@@ -95,7 +95,9 @@ def test_detail_current_and_next_three_bookings():
 
 
 def test_idle_warning_text():
-    assert idle_warning("gpu-01", 2, 3) == (
+    assert idle_warning("gpu-01", 2, 3, 120) == (
         "⚠️ Your booking on gpu-01 has been idle for 2 hours. Warning 2/3 — "
         "after 3 warnings the booking is released."
     )
+    assert "idle for 1 hour. " in idle_warning("gpu-01", 1, 3, 60)
+    assert "idle for 90 minutes. " in idle_warning("gpu-01", 1, 3, 90)

@@ -10,6 +10,8 @@ class K:
     TG_BOT_USERNAME = "tg_bot_username"
     TG_GROUP_ID = "tg_group_id"
     TG_TOPIC_ID = "tg_topic_id"
+    TG_GROUP_TITLE = "telegram.group_title"
+    SETUP_BIND_OPEN_UNTIL = "setup.bind_open_until"  # ISO-8601 UTC; /bind accepted before it
     TG_TOPIC_POSTS = "tg_topic_posts"  # {"new_booking": True, "reclaimed": True, "freed": True}
     GRAFANA_URL = "grafana_url"
     GRAFANA_USER = "grafana_user"
@@ -52,6 +54,12 @@ class SettingsStore:
             row.value = stored
             row.is_secret = secret
         await self.db.flush()
+
+    async def delete(self, key: str) -> None:
+        row = await self.db.get(Setting, key)
+        if row is not None:
+            await self.db.delete(row)
+            await self.db.flush()
 
     async def get_rules(self) -> Rules:
         d = await self.get(K.RULES)
