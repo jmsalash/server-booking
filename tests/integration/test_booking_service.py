@@ -379,3 +379,21 @@ async def test_user_bookings_active_not_ended(db, make_user, make_server):
     views = await user_bookings(db, ana.id, NOW)
     assert [v.id for v in views] == [now_b.id, later.id]
     assert views[0].user_name == "ana"
+
+
+async def test_inactive_user_cannot_extend(db, store, make_user, make_server):
+    user = await make_user(active=False)
+    server = await make_server()
+    b = await _add(db, user, server, at(14), at(16))
+    with pytest.raises(PermissionError):
+        await extend(db, store, b.id, user, at(18), NOW)
+    assert b.end_at == at(16)
+
+
+async def test_inactive_admin_may_still_extend(db, store, make_user, make_server):
+    owner = await make_user()
+    admin = await make_user(is_admin=True, active=False)
+    server = await make_server()
+    b = await _add(db, owner, server, at(14), at(16))
+    await extend(db, store, b.id, admin, at(18), NOW)
+    assert b.end_at == at(18)

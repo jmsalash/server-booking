@@ -11,6 +11,7 @@ from app.jobs.membership import membership_sync
 from app.jobs.monitor import idle_check, spike_check
 from app.jobs.runner import run_job
 from app.models import Booking, MetricSnapshot, OutboxItem, Server, User
+from app.services import booking as booking_svc
 from app.services import watchlist
 from app.settings_store import K
 from tests.fakes import FakeTelegram
@@ -252,6 +253,31 @@ async def test_completion_and_reminders_sent_once(db, store, make_user, make_ser
     assert b.status == "completed"
     await db.refresh(late)
     assert late.status == "active" and not late.start_reminder_sent
+
+
+async def test_extend_rearms_end_reminder(db, store, make_user, make_server):
+    user = await make_user()
+    server = await make_server(name="cpu-07")
+    b = await _book(db, user, server, L("2026-11-10T10:00"), L("2026-11-10T12:00"), "cpu")
+    await booking_lifecycle(db, store, L("2026-11-10T11:00"))
+    assert await _texts(db, user.telegram_id) == ["⏰ Your booking on cpu-07 ends at 12:00."]
+    await booking_svc.extend(db, store, b.id, user, L("2026-11-10T15:00"), L("2026-11-10T11:05"))
+    assert b.end_reminder_sent is False
+    await booking_lifecycle(db, store, L("2026-11-10T14:00"))
+    assert await _texts(db, user.telegram_id) == [
+        "⏰ Your booking on cpu-07 ends at 12:00.",
+        "⏰ Your booking on cpu-07 ends at 15:00.",
+    ]
+
+
+async def test_end_early_suppresses_end_reminder(db, store, make_user, make_server):
+    user = await make_user()
+    server = await make_server(name="cpu-07")
+    b = await _book(db, user, server, L("2026-11-10T09:00"), L("2026-11-10T18:00"), "cpu")
+    await booking_svc.end_early(db, store, b.id, user, L("2026-11-10T10:20"))
+    assert b.end_at == L("2026-11-10T11:00") and b.end_reminder_sent is True
+    await booking_lifecycle(db, store, L("2026-11-10T10:21"))
+    assert await _texts(db, user.telegram_id) == []
 
 
 async def test_freed_transition_posts_topic_and_fires_watchlist(db, store, make_user, make_server):

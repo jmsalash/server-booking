@@ -142,6 +142,9 @@ async def _end_early(
         await calendar_sync.queue_delete(db, store, b.id, now)
     else:
         b.end_at = new_end
+        # The new end is at most an hour away: an "ends soon / Extend" reminder right after
+        # the user chose to end early would be noise.
+        b.end_reminder_sent = True
         await db.flush()
         await calendar_sync.queue_update(db, store, b.id, now)
     return {"old_end": old_end.isoformat(), "new_end": new_end.isoformat(), "status": b.status}
@@ -222,6 +225,8 @@ async def extend(
     server = await _lock_server(db, current.server_id)  # serialise with creates
     b = await _lock_booking(db, booking_id)
     _check_actor(b, actor)
+    if not actor.active and not actor.is_admin:
+        raise PermissionError(f"user {actor.id} is inactive")
     if b.status != "active" or b.end_at <= now:
         raise BookingRejected(BookingError.IN_PAST)
     if new_end <= b.end_at:
@@ -245,12 +250,13 @@ async def extend(
     )
     if not v.ok:
         raise BookingRejected(v.error)
-    old_end = b.end_at
+    old_end, old_reminded = b.end_at, b.end_reminder_sent
     b.end_at = new_end
+    b.end_reminder_sent = False  # re-arm the end reminder for the new end
     try:
         await _flush_or_conflict(db)
     except BookingRejected:
-        b.end_at = old_end
+        b.end_at, b.end_reminder_sent = old_end, old_reminded
         raise
     await calendar_sync.queue_update(db, store, b.id, now)
     await audit.record(
