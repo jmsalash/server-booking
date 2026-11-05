@@ -30,6 +30,7 @@ def to_view(b: Booking, user_name: str) -> BookingView:
     return BookingView(
         id=b.id, user_id=b.user_id, user_name=user_name, server_id=b.server_id,
         start=b.start_at, end=b.end_at, resource=b.resource, is_shared=b.is_shared,
+        idle_warnings=b.idle_warnings or 0,
     )
 
 

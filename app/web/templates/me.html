@@ -4,6 +4,7 @@
 <section class="panel">
   <h1>My bookings</h1>
   {% if error %}<div class="banner banner--error">{{ error }}</div>{% endif %}
+  {% if notice %}<div class="banner banner--warn">{{ notice }}</div>{% endif %}
   {% if bookings %}
   <table class="list">
     <thead><tr><th>Server</th><th>When</th><th>Resources</th><th></th></tr></thead>
@@ -14,6 +15,10 @@
       <td>{{ b.start|day_hm(tz) }} – {{ b.end|day_hm(tz) }}{% if b.is_shared %} · shared{% endif %}</td>
       <td>{{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}</td>
       <td class="actions">
+        {% if b.idle_warnings > 0 and b.start <= now %}
+        <span class="muted">Idle warnings: {{ b.idle_warnings }}/{{ max_idle }}</span>
+        <form method="post" action="/bookings/{{ b.id }}/still-using" class="inline"><button type="submit">I'm still using it</button></form>
+        {% endif %}
         {% if b.start > now %}
         <form method="post" action="/bookings/{{ b.id }}/cancel" class="inline"><button type="submit">Cancel</button></form>
         {% else %}

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,7 @@ from app.domain.rules import Rules
 from app.domain.status import STATUS_LABEL
 from app.domain.timeutil import floor_hour, parse_local
 from app.domain.types import StatusCode
-from app.models import LoginToken, Server, Session, User
+from app.models import Booking, LoginToken, Server, Session, User
 from app.services import auth, board, booking, watchlist
 from app.services.inventory import list_servers
 from app.settings_store import K, SettingsStore
@@ -45,6 +45,7 @@ ERROR_TEXT: dict[BookingError, str] = {
 RESOURCES = ("cpu", "cpu_gpu")
 BAD_FORM = "Please choose a server and fill in a valid start and end."
 TIMELINE_DAYS = 14
+STILL_USING_REFUSED = "That booking isn't yours or has ended."
 MAX_ID = 2**31 - 1  # ids are int4; larger values would make asyncpg raise
 MIN_YEAR, MAX_YEAR = 2000, 2100
 EXPIRED_FRAGMENT = (
@@ -292,7 +293,7 @@ async def book_submit(
 
 async def _render_me(
     request: Request, db: AsyncSession, store: SettingsStore, user: User,
-    status: int = 200, error: str | None = None,
+    status: int = 200, error: str | None = None, notice: str | None = None,
 ) -> HTMLResponse:
     now = clock.utcnow()
     rules = await store.get_rules()
@@ -300,7 +301,8 @@ async def _render_me(
     return _render(request, "me.html", {
         "user": user, "bookings": await booking.user_bookings(db, user.id, now),
         "subs": await watchlist.for_user(db, user.id), "names": names, "now": now,
-        "tz": rules.timezone, "error": error,
+        "tz": rules.timezone, "error": error, "notice": notice,
+        "max_idle": rules.max_idle_warnings,
     }, status)
 
 
@@ -336,6 +338,29 @@ async def end_now(
     await booking.end_early(db, store, check_id(booking_id), actor=user, now=clock.utcnow())
     await db.commit()
     return _redirect("/me")
+
+
+@router.post("/bookings/{booking_id}/still-using")
+async def still_using(
+    request: Request,
+    booking_id: int,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    store: SettingsStore = Depends(get_store),
+):
+    b = await db.get(Booking, check_id(booking_id))
+    if b is None:
+        raise LookupError(f"booking {booking_id} not found")
+    if b.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your booking.")
+    now = clock.utcnow()
+    if b.status != "active" or b.end_at <= now:
+        return await _render_me(request, db, store, user, 400, STILL_USING_REFUSED)
+    if not await booking.acknowledge_still_using(db, b.id, user.telegram_id, now):
+        await _rollback(db, user)
+        return await _render_me(request, db, store, user, 400, STILL_USING_REFUSED)
+    await db.commit()
+    return await _render_me(request, db, store, user, notice="Idle counter reset.")
 
 
 @router.post("/bookings/{booking_id}/extend")

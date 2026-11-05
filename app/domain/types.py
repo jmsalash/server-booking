@@ -38,6 +38,7 @@ class BookingView:
     end: datetime
     resource: str
     is_shared: bool
+    idle_warnings: int = 0
 
 
 class StatusCode(StrEnum):

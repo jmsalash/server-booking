@@ -620,3 +620,53 @@ async def test_other_db_errors_are_not_masked(client, db, logged_in, make_server
     with pytest.raises(DBAPIError):
         await client.post("/book", data={"server_id": s.id, "start": "2026-11-10T14:00",
                                          "end": "2026-11-10T16:00", "resource": "cpu"})
+
+
+async def _running(db, user, server, **kw):
+    return await _add(db, user, server, NOW - timedelta(hours=1), NOW + timedelta(hours=1), **kw)
+
+
+async def test_me_still_using_button_only_with_warnings(client, logged_in, db, make_server):
+    s1, s2 = await make_server(name="srv-1"), await make_server(name="srv-2")
+    warned = await _running(db, logged_in, s1, idle_warnings=2)
+    clean = await _running(db, logged_in, s2)
+    await db.commit()
+    r = await client.get("/me")
+    assert f"/bookings/{warned.id}/still-using" in r.text
+    assert f"/bookings/{clean.id}/still-using" not in r.text
+    assert "Idle warnings: 2/3" in r.text
+
+
+async def test_still_using_resets_idle_state(client, logged_in, db, make_server):
+    s = await make_server(name="srv")
+    b = await _running(db, logged_in, s, idle_warnings=2, idle_since=NOW, idle_ram_baseline=5.0)
+    await db.commit()
+    r = await client.post(f"/bookings/{b.id}/still-using")
+    assert r.status_code == 200 and "Idle counter reset." in r.text
+    [row] = await _bookings(db, s.id)
+    assert row.idle_warnings == 0 and row.idle_since is None and row.idle_ram_baseline is None
+
+
+async def test_still_using_other_users_booking_forbidden(
+    client, logged_in, db, make_user, make_server
+):
+    bob = await make_user(display_name="Bob")
+    s = await make_server(name="srv")
+    b = await _running(db, bob, s, idle_warnings=2)
+    await db.commit()
+    r = await client.post(f"/bookings/{b.id}/still-using")
+    assert r.status_code == 403
+    [row] = await _bookings(db, s.id)
+    assert row.idle_warnings == 2
+
+
+async def test_still_using_ended_booking_refused(client, logged_in, db, make_server):
+    s = await make_server(name="srv")
+    b = await _add(db, logged_in, s, NOW - timedelta(hours=3), NOW - timedelta(hours=1),
+                   idle_warnings=2)
+    await db.commit()
+    r = await client.post(f"/bookings/{b.id}/still-using")
+    assert "That booking isn&#39;t yours or has ended." in r.text or "isn't yours" in r.text
+    [row] = await _bookings(db, s.id)
+    assert row.idle_warnings == 2
+    assert (await client.post("/bookings/99999/still-using")).status_code == 404
