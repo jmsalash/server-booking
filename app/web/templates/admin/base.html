@@ -1,12 +1,21 @@
 {% extends "base.html" %}
-{% block title %}Admin — Server booking{% endblock %}
+{% block title %}Admin — Lab Servers{% endblock %}
 {% block content %}
 {% if user and user.is_admin %}
-<nav class="subnav">
-  {% for href, label, key in [("/admin/integrations", "Integrations", "integrations"), ("/admin/servers", "Servers", "servers"), ("/admin/rules", "Rules", "rules"), ("/admin/bookings", "Bookings", "bookings"), ("/admin/health", "Health", "health"), ("/admin/audit", "Audit", "audit")] %}
-  <a href="{{ href }}"{% if section == key %} class="current"{% endif %}>{{ label }}</a>
-  {% endfor %}
-</nav>
+<div class="admin">
+  <nav class="sidenav" aria-label="Admin">
+    <p class="sidenav__title">Admin</p>
+    <ul>
+      {% for href, label, key in [("/admin/servers", "Servers", "servers"), ("/admin/integrations", "Integrations", "integrations"), ("/admin/rules", "Rules", "rules"), ("/admin/bookings", "Bookings", "bookings"), ("/admin/health", "Health", "health"), ("/admin/audit", "Audit", "audit")] %}
+      <li><a href="{{ href }}"{% if section == key %} aria-current="page"{% endif %}>{{ label }}</a></li>
+      {% endfor %}
+    </ul>
+  </nav>
+  <div class="admin__main">
+    {% block admin_content %}{% endblock %}
+  </div>
+</div>
+{% else %}
+{{ self.admin_content() }}
 {% endif %}
-{% block admin_content %}{% endblock %}
 {% endblock %}

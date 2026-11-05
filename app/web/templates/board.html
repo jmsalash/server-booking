@@ -1,9 +1,17 @@
 {% extends "base.html" %}
+{% block title %}Board — Lab Servers{% endblock %}
 {% block content %}
-{% if monitoring_down %}
-<div class="banner banner--warn">Monitoring is down — usage data is stale, so no server is shown as shareable.</div>
-{% endif %}
+<div class="page-head">
+  <div>
+    <h1>Servers</h1>
+    <p class="muted">Live status, refreshed every minute. Times in {{ tz }}.</p>
+  </div>
+  <a class="btn btn--primary" href="/book">Book a server</a>
+</div>
 {% include "_legend.html" %}
+{% if monitoring_down %}
+<div class="alert alert--warning" role="status">Monitoring is down — usage data is stale, so no server is shown as shareable.</div>
+{% endif %}
 <div hx-get="/board/cards" hx-trigger="every 60s" hx-swap="innerHTML">
   {% include "_board_cards.html" %}
 </div>

@@ -17,8 +17,8 @@ from app import clock
 from app.domain.rules import Rules
 from app.integrations.gcal import GoogleCalendarClient
 from app.integrations.grafana import (
-    DCGM_QUERIES, DEFAULT_QUERIES, GrafanaClient, discover_hosts, effective_queries, fetch_usage,
-    is_legacy_default, redact,
+    DEFAULT_QUERIES, NVIDIA_SMI_QUERIES, GrafanaClient, discover_hosts, effective_queries,
+    fetch_usage, is_legacy_default, redact,
 )
 from app.jobs.metrics import HEALTH_KEY
 from app.models import AuditLog, Booking, OutboxItem, Server, TelegramTopic, User
@@ -41,9 +41,9 @@ QUERY_KEYS = ("cpu", "ram", "gpu_util", "gpu_mem", "discover_hosts", "discover_g
 QUERY_HELP = {
     "discover_hosts": "Import from Grafana: one series per host, labelled instance (a :port "
                       "suffix is dropped).",
-    "discover_gpus": "Import from Grafana: GPU count per host, labelled instance "
-                     "(nvidia_gpu_exporter, :port dropped) or Hostname (DCGM); matched to the "
-                     "host case-insensitively, short name or FQDN.",
+    "discover_gpus": "Import from Grafana: GPU count per host, labelled instance (a :port "
+                     "suffix is dropped); matched to the host case-insensitively, short name "
+                     "or FQDN.",
 }
 MAX_IMPORT_ROWS = 1000
 STATUSES = ("active", "cancelled", "reclaimed", "completed")
@@ -140,7 +140,7 @@ async def grafana_ctx(store: SettingsStore) -> dict:
         "datasources": datasources,
         "queries": {k: queries[k] for k in QUERY_KEYS},
         "query_help": QUERY_HELP,
-        "dcgm_queries": DCGM_QUERIES,
+        "alt_gpu_queries": NVIDIA_SMI_QUERIES,
     }
 
 

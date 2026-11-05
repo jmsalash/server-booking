@@ -1,42 +1,17 @@
-{% extends "admin/base.html" %}
-{% block title %}Setup: Grafana — Server booking{% endblock %}
-{% block admin_content %}
-<section class="panel">
-  <h1>Step 3 of 4 — Grafana (optional)</h1>
-  <p>Usage bars, idle detection and sharing need metrics from Grafana. You can skip this and configure it later under Admin → Integrations.</p>
-  {% if error %}<div class="banner banner--error">{{ error }}</div>{% endif %}
-  {% if message %}<div class="banner banner--warn">{{ message }}</div>{% endif %}
-  <form method="post" action="/admin/setup/grafana" class="form form--wide">
-    <label>Grafana URL <input type="url" name="url" value="{{ grafana.url }}" placeholder="https://grafana.lab.example"></label>
-    <label>User <input name="user" value="{{ grafana.user }}" autocomplete="off"></label>
-    <label>Password <input type="password" name="password" value="" autocomplete="new-password" placeholder="{{ placeholder if grafana.password_set else '' }}"></label>
-    <label>API token (instead of user/password) <input type="password" name="token" value="" autocomplete="off" placeholder="{{ placeholder if grafana.token_set else '' }}"></label>
-    <p class="muted">Secret fields are never shown; leave them blank to keep the saved value.</p>
-    <label>Prometheus datasource
-      <select name="ds_uid">
-        <option value="">— run “Test connection” to list datasources —</option>
-        {% for d in grafana.datasources %}<option value="{{ d.uid }}" {% if d.uid == grafana.ds_uid %}selected{% endif %}>{{ d.name }} ({{ d.uid }})</option>{% endfor %}
-      </select>
-    </label>
-    <fieldset>
-      <legend>Query templates</legend>
-      <p class="muted"><code>{instance}</code> is replaced by the server's Grafana instance as-is (use it with <code>=</code>); <code>{instance_re}</code> is the regex-escaped instance (use it inside <code>=~</code>).</p>
-      <p class="muted">The defaults target <strong>node_exporter</strong> (CPU, RAM, hosts) and <strong>nvidia_gpu_exporter</strong> (GPUs, labelled <code>instance</code> like node_exporter).</p>
-      <details>
-        <summary>Using the NVIDIA DCGM exporter instead?</summary>
-        <p class="muted">DCGM labels GPUs by <code>Hostname</code>. These were the defaults of earlier versions; a saved query that is exactly one of them is treated as unset and replaced by the nvidia_gpu_exporter default, so change it slightly (e.g. add <code>,gpu!=""</code> inside the braces) to keep using DCGM.</p>
-        {% for key, q in grafana.dcgm_queries.items() %}<p><code>{{ key }}</code>: <code>{{ q }}</code></p>{% endfor %}
-      </details>
-      {% for key, q in grafana.queries.items() %}
-      <label>{{ key }} <textarea name="q_{{ key }}" rows="3">{{ q }}</textarea></label>
-      {% if grafana.query_help[key] %}<p class="muted">{{ grafana.query_help[key] }}</p>{% endif %}
-      {% endfor %}
-    </fieldset>
-    <div class="actions">
-      <button type="submit" name="action" value="save">Save and continue</button>
-      <button type="submit" name="action" value="test">Test connection</button>
-      <button type="submit" name="action" value="skip" formnovalidate>Skip</button>
-    </div>
-  </form>
-</section>
+{% extends "admin/setup_base.html" %}
+{% block title %}Setup: Grafana — Lab Servers{% endblock %}
+{% block wizard_step %}grafana{% endblock %}
+{% block wizard_content %}
+<h1>Grafana <span class="badge">optional</span></h1>
+<p>Usage bars, idle detection and sharing need metrics from Grafana. You can skip this and configure it later under Admin → Integrations.</p>
+{% if error %}<div class="alert alert--danger" role="alert">{{ error }}</div>{% endif %}
+{% if message %}<div class="alert alert--success" role="status">{{ message }}</div>{% endif %}
+<form method="post" action="/admin/setup/grafana" class="form form--full">
+  {% include "admin/_grafana_fields.html" %}
+  <div class="form-actions">
+    <button type="submit" name="action" value="save" class="btn btn--primary">Save and continue</button>
+    <button type="submit" name="action" value="test" class="btn">Test connection</button>
+    <button type="submit" name="action" value="skip" class="btn" formnovalidate>Skip</button>
+  </div>
+</form>
 {% endblock %}

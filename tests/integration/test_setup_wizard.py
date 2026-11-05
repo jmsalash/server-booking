@@ -241,7 +241,7 @@ async def test_wizard_grafana_shows_default_queries_and_help(client, code):
     r = await client.get("/admin/setup/grafana")
     assert r.status_code == 200
     assert "node_cpu_seconds_total" in r.text and "nvidia_smi_utilization_gpu_ratio" in r.text
-    assert "DCGM_FI_DEV_GPU_UTIL" in r.text  # DCGM alternative shown in the help
+    assert "DCGM_FI_DEV_GPU_UTIL" in r.text  # DCGM defaults; nvidia_smi is the alternative
     assert "{instance_re}" in r.text and "=~" in r.text
 
 

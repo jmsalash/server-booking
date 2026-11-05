@@ -1,17 +1,17 @@
-{% extends "admin/base.html" %}
-{% block title %}Setup: Telegram — Server booking{% endblock %}
-{% block admin_content %}
-<section class="panel">
-  <h1>Step 1 of 4 — Telegram bot</h1>
-  <p>Create a bot with <a href="https://t.me/BotFather">@BotFather</a> and paste its token here. Keep the default privacy mode (on): the bot only needs to read the commands sent to it.</p>
-  {% if error %}<div class="banner banner--error">{{ error }}</div>{% endif %}
-  {% if bot_username %}<p class="muted">Current bot: @{{ bot_username }}</p>{% endif %}
-  <form method="post" action="/admin/setup/telegram" class="form">
-    <label>Bot token
-      <input type="password" name="token" value="" autocomplete="off" placeholder="{{ placeholder if token_set else '123456:ABC…' }}" {% if not token_set %}required{% endif %}>
-    </label>
-    {% if token_set %}<p class="muted">Leave blank to keep the saved token.</p>{% endif %}
-    <button type="submit">Check token and continue</button>
-  </form>
-</section>
+{% extends "admin/setup_base.html" %}
+{% block title %}Setup: Telegram — Lab Servers{% endblock %}
+{% block wizard_step %}telegram{% endblock %}
+{% block wizard_content %}
+<h1>Telegram bot</h1>
+<p>Create a bot with <a href="https://t.me/BotFather">@BotFather</a> and paste its token here. Keep the default privacy mode (on): the bot only needs to read the commands sent to it.</p>
+{% if error %}<div class="alert alert--danger" role="alert">{{ error }}</div>{% endif %}
+{% if bot_username %}<div class="alert alert--info">Current bot: @{{ bot_username }}</div>{% endif %}
+<form method="post" action="/admin/setup/telegram" class="form">
+  <div class="field">
+    <label for="setup-token">Bot token</label>
+    <input id="setup-token" type="password" name="token" value="" autocomplete="off" placeholder="{{ placeholder if token_set else '123456:ABC…' }}" {% if not token_set %}required{% endif %}{% if token_set %} aria-describedby="setup-token-help"{% endif %}>
+    {% if token_set %}<p class="help" id="setup-token-help">Leave blank to keep the saved token.</p>{% endif %}
+  </div>
+  <div class="form-actions"><button type="submit" class="btn btn--primary">Check token and continue</button></div>
+</form>
 {% endblock %}

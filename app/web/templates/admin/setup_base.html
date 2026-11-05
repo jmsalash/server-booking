@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Setup — Lab Servers{% endblock %}
+{% block content %}
+{% set current = self.wizard_step()|trim %}
+{% set steps = [("code", "Code"), ("telegram", "Telegram"), ("bind", "Bind"), ("grafana", "Grafana"), ("calendar", "Calendar")] %}
+{% set ns = namespace(before=true) %}
+<div class="wizard">
+  <p class="eyebrow">Setup</p>
+  <ol class="steps" aria-label="Setup steps">
+    {% for key, label in steps %}
+    {% if key == current %}{% set ns.before = false %}<li class="is-current" aria-current="step"><span class="steps__num" aria-hidden="true"></span>{{ label }}</li>
+    {% else %}<li class="{{ 'is-done' if ns.before else '' }}"><span class="steps__num" aria-hidden="true"></span>{{ label }}</li>{% endif %}
+    {% endfor %}
+  </ol>
+  <section class="card">
+    {% block wizard_content %}{% endblock %}
+  </section>
+</div>
+{% endblock %}

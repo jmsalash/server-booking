@@ -1,54 +1,70 @@
 {% extends "base.html" %}
-{% block title %}My bookings — Server booking{% endblock %}
+{% block title %}My bookings — Lab Servers{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>My bookings</h1>
-  {% if error %}<div class="banner banner--error">{{ error }}</div>{% endif %}
-  {% if notice %}<div class="banner banner--warn">{{ notice }}</div>{% endif %}
-  {% if bookings %}
-  <table class="list">
-    <thead><tr><th>Server</th><th>When</th><th>Resources</th><th></th></tr></thead>
-    <tbody>
-    {% for b in bookings %}
-    <tr>
-      <td>{{ names.get(b.server_id, "?") }}</td>
-      <td>{{ b.start|day_hm(tz) }} – {{ b.end|day_hm(tz) }}{% if b.is_shared %} · shared{% endif %}</td>
-      <td>{{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}</td>
-      <td class="actions">
-        {% if b.idle_warnings > 0 and b.start <= now %}
-        <span class="muted">Idle warnings: {{ b.idle_warnings }}/{{ max_idle }}</span>
-        <form method="post" action="/bookings/{{ b.id }}/still-using" class="inline"><button type="submit">I'm still using it</button></form>
-        {% endif %}
+<div class="page-head">
+  <div>
+    <h1>My bookings</h1>
+    <p class="muted">Current and upcoming bookings. Times in {{ tz }}.</p>
+  </div>
+  <a class="btn btn--primary" href="/book">Book a server</a>
+</div>
+{% if error %}<div class="alert alert--danger" role="alert">{{ error }}</div>{% endif %}
+{% if notice %}<div class="alert alert--success" role="status">{{ notice }}</div>{% endif %}
+{% if bookings %}
+<div class="booking-list">
+  {% for b in bookings %}
+  {% set idle = b.idle_warnings > 0 and b.start <= now %}
+  <article class="card booking{% if idle %} booking--idle{% endif %}">
+    <div class="booking__head">
+      <h3>{{ names.get(b.server_id, "?") }}</h3>
+      {% if b.start <= now %}<span class="badge badge--ok">In progress</span>{% else %}<span class="badge badge--accent">Upcoming</span>{% endif %}
+      <span class="badge">{{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}</span>
+      {% if b.is_shared %}<span class="badge badge--shared">shared</span>{% endif %}
+    </div>
+    <p class="booking__when">{{ b.start|day_hm(tz) }} – {{ b.end|day_hm(tz) }}</p>
+    {% if idle %}
+    <div class="alert alert--warning idle">
+      <span><strong>Idle warnings: {{ b.idle_warnings }}/{{ max_idle }}</strong> — the server looks unused; it will be reclaimed if this reaches {{ max_idle }}.</span>
+      <form method="post" action="/bookings/{{ b.id }}/still-using" class="inline"><button type="submit" class="btn btn--primary btn--sm">I'm still using it</button></form>
+    </div>
+    {% endif %}
+    <div class="booking__foot">
+      <form method="post" action="/bookings/{{ b.id }}/extend" class="extend">
+        <div class="field">
+          <label for="extend-{{ b.id }}">New end</label>
+          <input id="extend-{{ b.id }}" type="datetime-local" name="end" step="3600" value="{{ b.end|local_input(tz) }}" required>
+        </div>
+        <button type="submit" class="btn">Extend</button>
+      </form>
+      <div class="actions">
         {% if b.start > now %}
-        <form method="post" action="/bookings/{{ b.id }}/cancel" class="inline"><button type="submit">Cancel</button></form>
+        <form method="post" action="/bookings/{{ b.id }}/cancel" class="inline"><button type="submit" class="btn btn--danger">Cancel</button></form>
         {% else %}
-        <form method="post" action="/bookings/{{ b.id }}/end" class="inline"><button type="submit">End now</button></form>
+        <form method="post" action="/bookings/{{ b.id }}/end" class="inline"><button type="submit" class="btn btn--danger">End now</button></form>
         {% endif %}
-        <form method="post" action="/bookings/{{ b.id }}/extend" class="inline">
-          <input type="datetime-local" name="end" step="3600" value="{{ b.end|local_input(tz) }}" required>
-          <button type="submit">Extend</button>
-        </form>
-      </td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="muted">You have no current or upcoming bookings. <a href="/book">Book a server</a>.</p>
-  {% endif %}
-</section>
-<section class="panel">
-  <h2>Notify me when free</h2>
+      </div>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty">
+  <p class="empty__title">No bookings</p>
+  <p>You have no current or upcoming bookings. <a href="/book">Book a server</a>.</p>
+</div>
+{% endif %}
+<section class="card mt-5">
+  <div class="card__head"><h2>Notify me when free</h2></div>
   {% if subs %}
-  <ul>
+  <ul class="plain-list">
     {% for s in subs %}
-    <li>{{ names.get(s.server_id, "?") }}
-      <form method="post" action="/watch/{{ s.id }}/delete" class="inline"><button type="submit" class="link">Remove</button></form>
+    <li><span class="plain-list__name">{{ names.get(s.server_id, "?") }}</span>
+      <form method="post" action="/watch/{{ s.id }}/delete" class="inline"><button type="submit" class="btn btn--sm">Remove</button></form>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="muted">You are not watching any server.</p>
+  <p class="muted">You are not watching any server. Use “Notify me when free” on the board to get a Telegram message when a busy server frees up.</p>
   {% endif %}
 </section>
 {% endblock %}

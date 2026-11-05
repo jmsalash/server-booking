@@ -1,25 +1,63 @@
 {% extends "admin/base.html" %}
 {% block title %}Rules — Admin{% endblock %}
-{% block admin_content %}
-<section class="panel">
-  <h1>Rules</h1>
-  {% for e in errors %}<div class="banner banner--error">{{ e }}</div>{% endfor %}
-  <form method="post" action="/admin/rules" class="form">
-    {% for name in fields %}
-    {% if name == "work_days" %}
-    <fieldset>
-      <legend>{{ labels[name] }}</legend>
-      {% for d in range(7) %}
-      <label><input type="checkbox" name="work_days" value="{{ d }}" {% if d in values.work_days %}checked{% endif %}> {{ day_names[d] }}</label>
-      {% endfor %}
-    </fieldset>
-    {% elif name in ("work_start", "work_end") %}
-    <label>{{ labels[name] }} <input name="{{ name }}" value="{{ values[name] }}" pattern="[0-2][0-9]:[0-5][0-9]" placeholder="HH:MM" required></label>
-    {% else %}
-    <label>{{ labels[name] }} <input name="{{ name }}" value="{{ values[name] }}" required></label>
-    {% endif %}
+{% macro rule_field(name) -%}
+{% if name == "work_days" %}
+<fieldset class="fieldset--plain">
+  <legend>{{ labels[name] }}</legend>
+  <div class="check-list">
+    {% for d in range(7) %}
+    <label class="check"><input type="checkbox" name="work_days" value="{{ d }}" {% if d in values.work_days %}checked{% endif %}> {{ day_names[d] }}</label>
     {% endfor %}
-    <button type="submit">Save rules</button>
-  </form>
-</section>
+  </div>
+</fieldset>
+{% elif name in ("work_start", "work_end") %}
+<div class="field">
+  <label for="rule-{{ name }}">{{ labels[name] }}</label>
+  <input id="rule-{{ name }}" name="{{ name }}" value="{{ values[name] }}" pattern="[0-2][0-9]:[0-5][0-9]" placeholder="HH:MM" required>
+</div>
+{% else %}
+<div class="field">
+  <label for="rule-{{ name }}">{{ labels[name] }}</label>
+  <input id="rule-{{ name }}" name="{{ name }}" value="{{ values[name] }}" required>
+</div>
+{% endif %}
+{%- endmacro %}
+{% block admin_content %}
+<div class="page-head">
+  <div>
+    <h1>Rules</h1>
+    <p class="muted">Booking limits, working hours, idle detection and sharing thresholds.</p>
+  </div>
+</div>
+{% if errors %}
+<div class="alert alert--danger" role="alert">
+  {% if errors|length == 1 %}{{ errors[0] }}{% else %}<ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+</div>
+{% endif %}
+{% set groups = [
+  ("Bookings", ["timezone", "max_booking_hours", "soon_window_min"]),
+  ("Working hours", ["work_days", "work_start", "work_end"]),
+  ("Idle detection", ["idle_window_min", "idle_gpu_util_pct", "idle_cpu_pct", "idle_ram_delta_pp", "max_idle_warnings"]),
+  ("Sharing", ["share_threshold_pct", "share_avg_min", "spike_avg_min", "gpu_idle_util_pct", "gpu_idle_mem_pct"]),
+  ("Monitoring", ["stale_after_min", "snapshot_retention_h"]),
+] %}
+<form method="post" action="/admin/rules" class="form form--wide">
+  {% for title, names in groups %}
+  <fieldset class="fieldset">
+    <legend>{{ title }}</legend>
+    <div class="field-row field-row--end">
+      {% for name in names if name in fields %}{{ rule_field(name) }}{% endfor %}
+    </div>
+  </fieldset>
+  {% endfor %}
+  {% set known = groups|map(attribute=1)|sum(start=[]) %}
+  {% set other = fields|reject("in", known)|list %}
+  {% if other %}
+  <fieldset class="fieldset">
+    <legend>Other</legend>
+    <div class="field-row field-row--end">{% for name in other %}{{ rule_field(name) }}{% endfor %}</div>
+  </fieldset>
+  {% endif %}
+  <div class="form-actions"><button type="submit" class="btn btn--primary">Save rules</button></div>
+</form>
 {% endblock %}

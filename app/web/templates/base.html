@@ -3,28 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Server booking{% endblock %}</title>
+  <title>{% block title %}Lab Servers{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js"></script>
 </head>
 <body>
-  <header class="top">
-    <a class="brand" href="/">Server booking</a>
-    {% if user %}
-    <nav>
-      <a href="/">Board</a>
-      <a href="/book">Book</a>
-      <a href="/me">My bookings</a>
-      {% if user.is_admin %}<a href="/admin">Admin</a>{% endif %}
-      <span class="who">{{ user.display_name }}</span>
-      <form method="post" action="/logout" class="inline"><button type="submit" class="link">Log out</button></form>
-    </nav>
-    {% endif %}
+  {% set path = request.url.path if request else "" %}
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="brand" href="/"><span class="brand__mark" aria-hidden="true"></span>Lab Servers</a>
+      {% if user %}
+      <nav class="nav" aria-label="Main">
+        <a href="/"{% if path == "/" %} aria-current="page"{% endif %}>Board</a>
+        <a href="/book"{% if path == "/book" %} aria-current="page"{% endif %}>Book</a>
+        <a href="/me"{% if path == "/me" %} aria-current="page"{% endif %}>My bookings</a>
+        {% if user.is_admin %}<a href="/admin"{% if path.startswith("/admin") %} aria-current="page"{% endif %}>Admin</a>{% endif %}
+        <span class="nav__user">
+          <span class="who">{{ user.display_name }}</span>
+          <form method="post" action="/logout" class="inline"><button type="submit" class="btn btn--sm">Log out</button></form>
+        </span>
+      </nav>
+      {% endif %}
+    </div>
   </header>
   {% if user and user.dm_blocked %}
-  <div class="banner banner--warn">Unblock the bot in Telegram to receive notifications.</div>
+  <div class="page-banners">
+    <div class="alert alert--warning" role="status">Unblock the bot in Telegram to receive notifications.</div>
+  </div>
   {% endif %}
-  <main>
+  <main class="page{% block page_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
 </body>

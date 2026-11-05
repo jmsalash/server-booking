@@ -1,94 +1,86 @@
 {% extends "admin/base.html" %}
 {% block title %}Integrations — Admin{% endblock %}
 {% block admin_content %}
-<section class="panel">
-  <h1>Telegram</h1>
-  {% if errors.telegram %}<div class="banner banner--error">{{ errors.telegram }}</div>{% endif %}
-  <p>Bot: {% if telegram.bot_username %}@{{ telegram.bot_username }}{% else %}<span class="muted">not set</span>{% endif %}
-    · Group: {% if telegram.group_id is not none %}{{ telegram.group_title or telegram.group_id }}{% else %}<span class="muted">not bound</span>{% endif %}</p>
+<div class="page-head">
+  <div>
+    <h1>Integrations</h1>
+    <p class="muted">Telegram, Grafana, Google Calendar and the portal address.</p>
+  </div>
+</div>
+
+<section class="card" aria-labelledby="int-telegram">
+  <div class="card__head">
+    <h2 id="int-telegram">Telegram</h2>
+    <div class="actions">
+      <span class="badge {{ 'badge--ok' if telegram.bot_username else '' }}">Bot: {% if telegram.bot_username %}@{{ telegram.bot_username }}{% else %}not set{% endif %}</span>
+      <span class="badge {{ 'badge--ok' if telegram.group_id is not none else '' }}">Group: {% if telegram.group_id is not none %}{{ telegram.group_title or telegram.group_id }}{% else %}not bound{% endif %}</span>
+    </div>
+  </div>
+  {% if errors.telegram %}<div class="alert alert--danger" role="alert">{{ errors.telegram }}</div>{% endif %}
   <form method="post" action="/admin/integrations/telegram" class="form">
-    <label>Bot token
-      <input type="password" name="token" value="" autocomplete="off" placeholder="{{ placeholder if telegram.token_set else '' }}">
-    </label>
-    <p class="muted">Leave blank to keep the saved token. A new token is checked with Telegram before it is saved.</p>
-    <label>Booking topic
-      <select name="topic_id">
+    <div class="field">
+      <label for="tg-token">Bot token</label>
+      <input id="tg-token" type="password" name="token" value="" autocomplete="off" placeholder="{{ placeholder if telegram.token_set else '' }}" aria-describedby="tg-token-help">
+      <p class="help" id="tg-token-help">Leave blank to keep the saved token. A new token is checked with Telegram before it is saved.</p>
+    </div>
+    <div class="field">
+      <label for="tg-topic">Booking topic</label>
+      <select id="tg-topic" name="topic_id" aria-describedby="tg-topic-help">
         {% if telegram.topic_id is none %}<option value="">— none —</option>{% endif %}
         {% for t in telegram.topics %}
         <option value="{{ t.thread_id }}" {% if t.thread_id == telegram.topic_id %}selected{% endif %}>{{ t.title }} ({{ t.thread_id }})</option>
         {% endfor %}
       </select>
-    </label>
-    <p class="muted">A topic appears here after <code>/bind</code> or another bot command has been sent in it. With privacy mode on, the bot does not see ordinary messages.</p>
-    <fieldset>
+      <p class="help" id="tg-topic-help">A topic appears here after <code>/bind</code> or another bot command has been sent in it. With privacy mode on, the bot does not see ordinary messages.</p>
+    </div>
+    <fieldset class="fieldset">
       <legend>Post to the topic</legend>
-      {% for key, label, on in telegram.posts %}
-      <label><input type="checkbox" name="post_{{ key }}" {% if on %}checked{% endif %}> {{ label }}</label>
-      {% endfor %}
+      <div class="check-list check-list--stack">
+        {% for key, label, on in telegram.posts %}
+        <label class="check"><input type="checkbox" name="post_{{ key }}" {% if on %}checked{% endif %}> {{ label }}</label>
+        {% endfor %}
+      </div>
     </fieldset>
-    <button type="submit">Save Telegram settings</button>
+    <div class="form-actions"><button type="submit" class="btn btn--primary">Save Telegram settings</button></div>
   </form>
 </section>
 
-<section class="panel">
-  <h1>Grafana</h1>
-  {% if errors.grafana %}<div class="banner banner--error">{{ errors.grafana }}</div>{% endif %}
-  {% if messages.grafana %}<div class="banner banner--warn">{{ messages.grafana }}</div>{% endif %}
+<section class="card" aria-labelledby="int-grafana">
+  <div class="card__head"><h2 id="int-grafana">Grafana</h2></div>
+  {% if errors.grafana %}<div class="alert alert--danger" role="alert">{{ errors.grafana }}</div>{% endif %}
+  {% if messages.grafana %}<div class="alert alert--success" role="status">{{ messages.grafana }}</div>{% endif %}
   <form method="post" action="/admin/integrations/grafana" class="form form--wide">
-    <label>Grafana URL <input type="url" name="url" value="{{ grafana.url }}" placeholder="https://grafana.lab.example"></label>
-    <label>User <input name="user" value="{{ grafana.user }}" autocomplete="off"></label>
-    <label>Password <input type="password" name="password" value="" autocomplete="new-password" placeholder="{{ placeholder if grafana.password_set else '' }}"></label>
-    <label>API token (instead of user/password) <input type="password" name="token" value="" autocomplete="off" placeholder="{{ placeholder if grafana.token_set else '' }}"></label>
-    <p class="muted">Secret fields are never shown; leave them blank to keep the saved value.</p>
-    <label>Prometheus datasource
-      <select name="ds_uid">
-        <option value="">— run “Test connection” to list datasources —</option>
-        {% for d in grafana.datasources %}<option value="{{ d.uid }}" {% if d.uid == grafana.ds_uid %}selected{% endif %}>{{ d.name }} ({{ d.uid }})</option>{% endfor %}
-      </select>
-    </label>
-    <fieldset>
-      <legend>Query templates</legend>
-      <p class="muted"><code>{instance}</code> is replaced by the server's Grafana instance as-is (use it with <code>=</code>); <code>{instance_re}</code> is the regex-escaped instance (use it inside <code>=~</code>). Clear a field to restore its default.</p>
-      <p class="muted">The defaults target <strong>node_exporter</strong> (CPU, RAM, hosts) and <strong>nvidia_gpu_exporter</strong> (GPUs, labelled <code>instance</code> like node_exporter).</p>
-      <details>
-        <summary>Using the NVIDIA DCGM exporter instead?</summary>
-        <p class="muted">DCGM labels GPUs by <code>Hostname</code>. These were the defaults of earlier versions; a saved query that is exactly one of them is treated as unset and replaced by the nvidia_gpu_exporter default, so change it slightly (e.g. add <code>,gpu!=""</code> inside the braces) to keep using DCGM.</p>
-        {% for key, q in grafana.dcgm_queries.items() %}<p><code>{{ key }}</code>: <code>{{ q }}</code></p>{% endfor %}
-      </details>
-      {% for key, q in grafana.queries.items() %}
-      <label>{{ key }} <textarea name="q_{{ key }}" rows="3">{{ q }}</textarea></label>
-      {% if grafana.query_help[key] %}<p class="muted">{{ grafana.query_help[key] }}</p>{% endif %}
-      {% endfor %}
-    </fieldset>
-    <div class="actions">
-      <button type="submit" name="action" value="save">Save</button>
-      <button type="submit" name="action" value="test">Test connection</button>
+    {% set clear_restores = true %}{% include "admin/_grafana_fields.html" %}
+    <div class="form-actions">
+      <button type="submit" name="action" value="save" class="btn btn--primary">Save</button>
+      <button type="submit" name="action" value="test" class="btn">Test connection</button>
     </div>
   </form>
 </section>
 
-<section class="panel">
-  <h1>Google Calendar</h1>
-  {% if errors.calendar %}<div class="banner banner--error">{{ errors.calendar }}</div>{% endif %}
-  {% if messages.calendar %}<div class="banner banner--warn">{{ messages.calendar }}</div>{% endif %}
+<section class="card" aria-labelledby="int-calendar">
+  <div class="card__head"><h2 id="int-calendar">Google Calendar</h2></div>
+  {% if errors.calendar %}<div class="alert alert--danger" role="alert">{{ errors.calendar }}</div>{% endif %}
+  {% if messages.calendar %}<div class="alert alert--success" role="status">{{ messages.calendar }}</div>{% endif %}
   <form method="post" action="/admin/integrations/calendar" class="form" enctype="multipart/form-data">
-    <label>Service-account JSON key <input type="file" name="sa_json" accept="application/json,.json"></label>
-    {% if calendar.key_set %}<p class="muted">A key is saved ({{ placeholder }}). Leave empty to keep it.</p>{% endif %}
-    <label>Calendar id <input name="calendar_id" value="{{ calendar.calendar_id }}"></label>
-    <div class="actions">
-      <button type="submit" name="action" value="save">Save</button>
-      <button type="submit" name="action" value="test">Test</button>
+    {% include "admin/_calendar_fields.html" %}
+    <div class="form-actions">
+      <button type="submit" name="action" value="save" class="btn btn--primary">Save</button>
+      <button type="submit" name="action" value="test" class="btn">Test</button>
     </div>
   </form>
 </section>
 
-<section class="panel">
-  <h1>Portal</h1>
-  {% if errors.portal %}<div class="banner banner--error">{{ errors.portal }}</div>{% endif %}
+<section class="card" aria-labelledby="int-portal">
+  <div class="card__head"><h2 id="int-portal">Portal</h2></div>
+  {% if errors.portal %}<div class="alert alert--danger" role="alert">{{ errors.portal }}</div>{% endif %}
   <form method="post" action="/admin/integrations/portal" class="form">
-    <label>Portal base URL <input type="url" name="base_url" value="{{ portal_base_url }}" required></label>
-    <p class="muted">Used in bot messages that link to the portal.</p>
-    <button type="submit">Save</button>
+    <div class="field">
+      <label for="portal-url">Portal base URL</label>
+      <input id="portal-url" type="url" name="base_url" value="{{ portal_base_url }}" required aria-describedby="portal-url-help">
+      <p class="help" id="portal-url-help">Used in bot messages that link to the portal.</p>
+    </div>
+    <div class="form-actions"><button type="submit" class="btn btn--primary">Save</button></div>
   </form>
 </section>
 {% endblock %}

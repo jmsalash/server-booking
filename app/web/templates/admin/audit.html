@@ -1,26 +1,30 @@
 {% extends "admin/base.html" %}
 {% block title %}Audit — Admin{% endblock %}
 {% block admin_content %}
-<section class="panel">
-  <h1>Audit log</h1>
-  <p class="muted">Latest 200 entries; times in {{ tz }}.</p>
-  {% if rows %}
-  <table class="list">
+<div class="page-head">
+  <div>
+    <h1>Audit log</h1>
+    <p class="muted">Latest 200 entries; times in {{ tz }}.</p>
+  </div>
+</div>
+{% if rows %}
+<div class="table-wrap">
+  <table class="table table--compact">
     <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
     <tbody>
     {% for e, name in rows %}
     <tr>
-      <td>{{ e.ts|day_hm(tz) }}</td>
-      <td>{{ name or "system" }}</td>
-      <td>{{ e.action }}</td>
-      <td>{{ e.target or "" }}</td>
-      <td><code>{{ e.details|tojson if e.details else "" }}</code></td>
+      <td class="nowrap">{{ e.ts|day_hm(tz) }}</td>
+      <td class="nowrap">{% if name %}{{ name }}{% else %}<span class="muted">system</span>{% endif %}</td>
+      <td><code>{{ e.action }}</code></td>
+      <td class="nowrap">{{ e.target or "" }}</td>
+      <td class="details"><code>{{ e.details|tojson if e.details else "" }}</code></td>
     </tr>
     {% endfor %}
     </tbody>
   </table>
-  {% else %}
-  <p class="muted">No entries yet.</p>
-  {% endif %}
-</section>
+</div>
+{% else %}
+<div class="empty"><p class="empty__title">No entries yet</p></div>
+{% endif %}
 {% endblock %}

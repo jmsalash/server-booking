@@ -1,15 +1,14 @@
-{% extends "admin/base.html" %}
-{% block title %}Setup: bind group — Server booking{% endblock %}
-{% block admin_content %}
-<section class="panel">
-  <h1>Step 2 of 4 — Bind the group</h1>
-  <ol>
-    <li>Add {% if bot_username %}@{{ bot_username }}{% else %}the bot{% endif %} to your lab's Telegram group as a <strong>normal member</strong>. Do not make it an admin, and leave privacy mode on (the BotFather default).</li>
-    <li>In the machine-booking topic, send <code>/bind@{{ bot_username or "your_bot" }}</code>. With privacy mode on, Telegram reliably delivers only commands addressed to the bot. Only group admins can do this. It also registers the topic for the topic list under Integrations.</li>
-    <li>Your admin rights must not have “Remain anonymous” turned on, or the bot cannot tell who sent <code>/bind</code>.</li>
-  </ol>
-  <p class="muted">The bot deletes its own confirmation after 30 seconds. Delete your <code>/bind</code> message by hand if you like: letting the bot do it would mean making it an admin with “Delete messages”, which also lets it read every message in the group.</p>
-  <p class="muted">The bot accepts the first <code>/bind</code> for 15 minutes after this page was opened.</p>
-  {{ status_html }}
-</section>
+{% extends "admin/setup_base.html" %}
+{% block title %}Setup: bind group — Lab Servers{% endblock %}
+{% block wizard_step %}bind{% endblock %}
+{% block wizard_content %}
+<h1>Bind the group</h1>
+<ol class="numbered">
+  <li>Add {% if bot_username %}@{{ bot_username }}{% else %}the bot{% endif %} to your lab's Telegram group as a <strong>normal member</strong>. Do not make it an admin, and leave privacy mode on (the BotFather default).</li>
+  <li>In the machine-booking topic, send <code>/bind@{{ bot_username or "your_bot" }}</code>. With privacy mode on, Telegram reliably delivers only commands addressed to the bot. Only group admins can do this. It also registers the topic for the topic list under Integrations.</li>
+  <li>Your admin rights must not have “Remain anonymous” turned on, or the bot cannot tell who sent <code>/bind</code>.</li>
+</ol>
+<p class="help">The bot deletes its own confirmation after 30 seconds. Delete your <code>/bind</code> message by hand if you like: letting the bot do it would mean making it an admin with “Delete messages”, which also lets it read every message in the group.</p>
+<p class="help">The bot accepts the first <code>/bind</code> for 15 minutes after this page was opened.</p>
+{{ status_html }}
 {% endblock %}

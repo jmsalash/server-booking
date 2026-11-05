@@ -1,41 +1,48 @@
 {% extends "admin/base.html" %}
 {% block title %}Servers — Admin{% endblock %}
 {% block admin_content %}
-<section class="panel">
-  <h1>Servers</h1>
-  {% if notice %}<div class="banner banner--warn">{{ notice }}</div>{% endif %}
-  <p class="actions">
-    <a class="button" href="/admin/servers/new">Add server</a>
-    {% if grafana_ready %}<a class="button" href="/admin/servers/import">Import from Grafana</a>
-    {% else %}<span class="muted">To import servers from Grafana, configure it on the <a href="/admin/integrations">Integrations</a> page.</span>{% endif %}
-  </p>
-  {% if servers %}
-  <table class="list">
-    <thead><tr><th>Name</th><th>Hostname</th><th>Monitoring</th><th>GPUs</th><th>Shareable</th><th>Enabled</th><th></th></tr></thead>
+<div class="page-head">
+  <div>
+    <h1>Servers</h1>
+    <p class="muted">Machines people can book.</p>
+  </div>
+  <div class="actions">
+    {% if grafana_ready %}<a class="btn" href="/admin/servers/import">Import from Grafana</a>{% endif %}
+    <a class="btn btn--primary" href="/admin/servers/new">Add server</a>
+  </div>
+</div>
+{% if notice %}<div class="alert alert--success" role="status">{{ notice }}</div>{% endif %}
+{% if not grafana_ready %}<div class="alert alert--info">To import servers from Grafana, configure it on the <a href="/admin/integrations">Integrations</a> page.</div>{% endif %}
+{% if servers %}
+<div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Name</th><th>Hostname</th><th>Monitoring</th><th>GPUs</th><th>Shareable</th><th>Enabled</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
     <tbody>
     {% for s in servers %}
     <tr>
-      <td>{{ s.name }}</td>
-      <td>{{ s.hostname }}</td>
-      <td>{% if s.kind == "grafana" %}Grafana{% if s.grafana_instance %} ({{ s.grafana_instance }}){% endif %}{% else %}standalone{% endif %}</td>
-      <td>{{ s.gpu_count if s.has_gpu else "—" }}</td>
-      <td>{{ "yes" if s.shareable else "no" }}</td>
-      <td>{{ "yes" if s.enabled else "no" }}</td>
-      <td class="actions">
-        <a href="/admin/servers/{{ s.id }}">Edit</a>
-        {% if s.kind == "grafana" %}
-        <form method="post" action="/admin/servers/{{ s.id }}/fetch" class="inline"><button type="submit">Fetch usage now</button></form>
-        {% endif %}
+      <td><strong>{{ s.name }}</strong></td>
+      <td><code>{{ s.hostname }}</code></td>
+      <td>{% if s.kind == "grafana" %}Grafana{% if s.grafana_instance %} <span class="muted">({{ s.grafana_instance }})</span>{% endif %}{% else %}<span class="muted">standalone</span>{% endif %}</td>
+      <td class="num">{{ s.gpu_count if s.has_gpu else "—" }}</td>
+      <td>{% if s.shareable %}<span class="badge badge--shared">yes</span>{% else %}<span class="muted">no</span>{% endif %}</td>
+      <td>{% if s.enabled %}<span class="badge badge--ok">yes</span>{% else %}<span class="badge">no</span>{% endif %}</td>
+      <td class="nowrap">
+        <div class="actions actions--end">
+          {% if s.kind == "grafana" %}
+          <form method="post" action="/admin/servers/{{ s.id }}/fetch" class="inline"><button type="submit" class="btn btn--sm">Fetch usage now</button></form>
+          {% endif %}
+          <a class="btn btn--sm" href="/admin/servers/{{ s.id }}">Edit</a>
+        </div>
       </td>
     </tr>
     {% if fetched and fetched.server_id == s.id %}
-    <tr><td colspan="7"><div class="banner {{ 'banner--warn' if fetched.ok else 'banner--error' }}">{{ fetched.text }}</div></td></tr>
+    <tr><td colspan="7"><div class="alert {{ 'alert--success' if fetched.ok else 'alert--danger' }}">{{ fetched.text }}</div></td></tr>
     {% endif %}
     {% endfor %}
     </tbody>
   </table>
-  {% else %}
-  <p class="muted">No servers yet.</p>
-  {% endif %}
-</section>
+</div>
+{% else %}
+<div class="empty"><p class="empty__title">No servers yet</p><p>Add one by hand{% if grafana_ready %} or import them from Grafana{% endif %}.</p></div>
+{% endif %}
 {% endblock %}

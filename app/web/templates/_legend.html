@@ -1,5 +1,16 @@
-<ul class="legend">
-  {% for code, label, meaning in legend %}
-  <li><span class="dot dot--{{ code }}"></span><strong>{{ label }}</strong> <span class="muted">{{ meaning }}</span></li>
-  {% endfor %}
-</ul>
+<div class="legend-bar">
+  <ul class="legend" aria-label="Status legend">
+    {% for code, label, meaning in legend %}
+    <li title="{{ meaning }}"><span class="dot dot--{{ code }}" aria-hidden="true"></span>{{ label }}</li>
+    {% endfor %}
+  </ul>
+  <details class="legend__more">
+    <summary>What do the colours mean?</summary>
+    <dl>
+      {% for code, label, meaning in legend %}
+      <dt><span class="dot dot--{{ code }}" aria-hidden="true"></span>{{ label }}</dt>
+      <dd>{{ meaning }}</dd>
+      {% endfor %}
+    </dl>
+  </details>
+</div>

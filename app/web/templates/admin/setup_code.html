@@ -1,13 +1,15 @@
-{% extends "admin/base.html" %}
-{% block title %}Setup — Server booking{% endblock %}
-{% block admin_content %}
-<section class="panel login">
-  <h1>Set up server booking</h1>
-  <p>Enter the setup code printed in the web container's log (<code>SETUP CODE: XXXX-XXXX-XXXX</code>).</p>
-  {% if error %}<div class="banner banner--error">{{ error }}</div>{% endif %}
-  <form method="post" action="/admin/setup" class="form">
-    <label>Setup code <input name="code" autocomplete="off" required autofocus></label>
-    <button type="submit">Continue</button>
-  </form>
-</section>
+{% extends "admin/setup_base.html" %}
+{% block title %}Setup — Lab Servers{% endblock %}
+{% block wizard_step %}code{% endblock %}
+{% block wizard_content %}
+<h1>Set up Lab Servers</h1>
+<p>Enter the setup code printed in the web container's log (<code>SETUP CODE: XXXX-XXXX-XXXX</code>).</p>
+{% if error %}<div class="alert alert--danger" role="alert">{{ error }}</div>{% endif %}
+<form method="post" action="/admin/setup" class="form">
+  <div class="field">
+    <label for="setup-code">Setup code</label>
+    <input id="setup-code" name="code" autocomplete="off" required autofocus>
+  </div>
+  <div class="form-actions"><button type="submit" class="btn btn--primary">Continue</button></div>
+</form>
 {% endblock %}

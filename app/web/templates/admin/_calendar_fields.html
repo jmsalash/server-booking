@@ -1,0 +1,9 @@
+<div class="field">
+  <label for="cal-key">Service-account JSON key</label>
+  <input id="cal-key" type="file" name="sa_json" accept="application/json,.json"{% if calendar.key_set %} aria-describedby="cal-key-help"{% endif %}>
+  {% if calendar.key_set %}<p class="help" id="cal-key-help">A key is saved ({{ placeholder }}). Leave empty to keep it.</p>{% endif %}
+</div>
+<div class="field">
+  <label for="cal-id">Calendar id</label>
+  <input id="cal-id" name="calendar_id" value="{{ calendar.calendar_id }}" placeholder="…@group.calendar.google.com">
+</div>

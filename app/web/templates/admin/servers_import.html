@@ -1,43 +1,51 @@
 {% extends "admin/base.html" %}
 {% block title %}Import servers from Grafana — Admin{% endblock %}
 {% block admin_content %}
-<section class="panel">
-  <h1>Import servers from Grafana</h1>
-  {% if not configured %}
-  <p class="muted">Grafana is not configured. Set the Grafana URL and Prometheus datasource on the <a href="/admin/integrations">Integrations</a> page first.</p>
-  {% elif error %}
-  <div class="banner banner--error">{{ error }}</div>
-  {% elif rows is not none and not rows %}
-  <p class="muted">No hosts found. Check the <code>discover_hosts</code> query on the <a href="/admin/integrations">Integrations</a> page.</p>
-  {% else %}
-  {% if form_error %}<div class="banner banner--error">{{ form_error }}</div>{% endif %}
-  {% for n in notes %}<div class="banner banner--warn">{{ n }}</div>{% endfor %}
-  {% if gpu_note %}<div class="banner banner--warn">{{ gpu_note }}</div>{% endif %}
-  <p class="muted">Tick the hosts to add. They are added as Grafana-monitored, enabled servers; the GPU count comes from DCGM and can be corrected here.</p>
-  <form method="post" action="/admin/servers/import" class="form">
-    <table class="list">
-      <thead><tr><th>Add</th><th>Name</th><th>Grafana instance</th><th>GPUs</th><th>Shareable</th><th></th></tr></thead>
+<div class="page-head">
+  <div>
+    <p class="crumb"><a href="/admin/servers">← Servers</a></p>
+    <h1>Import servers from Grafana</h1>
+  </div>
+</div>
+{% if not configured %}
+<div class="alert alert--info">Grafana is not configured. Set the Grafana URL and Prometheus datasource on the <a href="/admin/integrations">Integrations</a> page first.</div>
+{% elif error %}
+<div class="alert alert--danger" role="alert">{{ error }}</div>
+{% elif rows is not none and not rows %}
+<div class="empty"><p class="empty__title">No hosts found</p><p>Grafana returned no hosts. Check the <code>discover_hosts</code> query on the <a href="/admin/integrations">Integrations</a> page.</p></div>
+{% else %}
+{% if form_error %}<div class="alert alert--danger" role="alert">{{ form_error }}</div>{% endif %}
+{% for n in notes %}<div class="alert alert--warning">{{ n }}</div>{% endfor %}
+{% if gpu_note %}<div class="alert alert--warning">{{ gpu_note }}</div>{% endif %}
+<section class="card">
+  <p>Tick the hosts to add. They are added as Grafana-monitored, enabled servers. The GPU count comes from Grafana's GPU metrics; correct it here if needed.</p>
+  <p class="muted small"><strong>Shareable</strong> allows a second booking while the current one uses less than half the machine (CPU, RAM and GPU, averaged over the last hour). Users are warned that resources are shared.</p>
+</section>
+<form method="post" action="/admin/servers/import">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th class="cell-center">Add</th><th>Name</th><th>Grafana instance</th><th>GPUs</th><th class="cell-center">Shareable</th><th><span class="visually-hidden">Notes</span></th></tr></thead>
       <tbody>
       {% for r in rows %}{% set i = loop.index0 %}
-      <tr>
-        <td><input type="checkbox" name="selected_{{ i }}" aria-label="Add {{ r.instance }}" {% if r.selected %}checked{% endif %} {% if r.exists %}disabled{% endif %}></td>
-        <td><input name="name_{{ i }}" value="{{ r.name }}" {% if r.exists %}readonly{% endif %}></td>
-        <td><input type="hidden" name="instance_{{ i }}" value="{{ r.instance }}">{{ r.instance }}</td>
-        <td><input type="number" name="gpu_count_{{ i }}" value="{{ r.gpu_count }}" min="0" max="64" {% if r.exists %}readonly{% endif %}></td>
-        <td><input type="checkbox" name="shareable_{{ i }}" aria-label="Shareable" {% if r.shareable %}checked{% endif %} {% if r.exists %}disabled{% endif %}></td>
-        <td>{% if r.exists %}<span class="muted">already added{% if r.existing %} as “{{ r.existing }}”{% endif %}</span>{% endif %}</td>
+      <tr{% if r.exists %} class="is-muted"{% endif %}>
+        <td class="cell-center"><input type="checkbox" name="selected_{{ i }}" aria-label="Add {{ r.instance }}" {% if r.selected %}checked{% endif %} {% if r.exists %}disabled{% endif %}></td>
+        <td><input name="name_{{ i }}" value="{{ r.name }}" aria-label="Name for {{ r.instance }}" {% if r.exists %}readonly{% endif %}></td>
+        <td><input type="hidden" name="instance_{{ i }}" value="{{ r.instance }}"><code>{{ r.instance }}</code></td>
+        <td><input type="number" name="gpu_count_{{ i }}" value="{{ r.gpu_count }}" min="0" max="64" aria-label="GPUs on {{ r.instance }}" {% if r.exists %}readonly{% endif %}></td>
+        <td class="cell-center"><input type="checkbox" name="shareable_{{ i }}" aria-label="Shareable" {% if r.shareable %}checked{% endif %} {% if r.exists %}disabled{% endif %}></td>
+        <td class="nowrap">{% if r.exists %}<span class="badge">Already added{% if r.existing %} as “{{ r.existing }}”{% endif %}</span>{% endif %}</td>
       </tr>
       {% for e in r.errors %}
-      <tr><td colspan="6"><div class="banner banner--error">{{ r.instance }}: {{ e }}</div></td></tr>
+      <tr class="row-error"><td colspan="6"><p class="field__error" role="alert">{{ r.instance }}: {{ e }}</p></td></tr>
       {% endfor %}
       {% endfor %}
       </tbody>
     </table>
-    <div class="actions">
-      <button type="submit">Add selected servers</button>
-      <a href="/admin/servers">Cancel</a>
-    </div>
-  </form>
-  {% endif %}
-</section>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn--primary">Add selected servers</button>
+    <a class="btn" href="/admin/servers">Cancel</a>
+  </div>
+</form>
+{% endif %}
 {% endblock %}

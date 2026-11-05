@@ -1,0 +1,46 @@
+<div class="field">
+  <label for="gf-url">Grafana URL</label>
+  <input id="gf-url" type="url" name="url" value="{{ grafana.url }}" placeholder="https://grafana.lab.example">
+</div>
+<div class="field-row">
+  <div class="field">
+    <label for="gf-user">User</label>
+    <input id="gf-user" name="user" value="{{ grafana.user }}" autocomplete="off">
+  </div>
+  <div class="field">
+    <label for="gf-password">Password</label>
+    <input id="gf-password" type="password" name="password" value="" autocomplete="new-password" placeholder="{{ placeholder if grafana.password_set else '' }}">
+  </div>
+</div>
+<div class="field">
+  <label for="gf-token">API token (instead of user/password)</label>
+  <input id="gf-token" type="password" name="token" value="" autocomplete="off" placeholder="{{ placeholder if grafana.token_set else '' }}" aria-describedby="gf-secret-help">
+  <p class="help" id="gf-secret-help">Secret fields are never shown; leave them blank to keep the saved value.</p>
+</div>
+<div class="field">
+  <label for="gf-ds">Prometheus datasource</label>
+  <select id="gf-ds" name="ds_uid">
+    <option value="">— run “Test connection” to list datasources —</option>
+    {% for d in grafana.datasources %}<option value="{{ d.uid }}" {% if d.uid == grafana.ds_uid %}selected{% endif %}>{{ d.name }} ({{ d.uid }})</option>{% endfor %}
+  </select>
+</div>
+<fieldset class="fieldset">
+  <legend>Query templates</legend>
+  <p class="help">Defaults assume node_exporter for CPU/RAM and NVIDIA's DCGM exporter for GPUs, both matched on the <code>instance</code> label. Use <code>{instance}</code> for the raw value and <code>{instance_re}</code> inside <code>=~</code> regex matchers.{% if clear_restores %} Clear a field to restore its default.{% endif %}</p>
+  {% if grafana.alt_gpu_queries %}
+  <details class="details-box">
+    <summary>Alternative for nvidia_gpu_exporter</summary>
+    <p class="help">Using utkuozdemir/nvidia_gpu_exporter instead of DCGM? Paste these into the GPU fields below.</p>
+    <div class="query-defaults">
+      {% for key, q in grafana.alt_gpu_queries.items() %}<p><code>{{ key }}</code>: <code>{{ q }}</code></p>{% endfor %}
+    </div>
+  </details>
+  {% endif %}
+  {% for key, q in grafana.queries.items() %}
+  <div class="field">
+    <label for="q-{{ key }}"><code>{{ key }}</code></label>
+    <textarea id="q-{{ key }}"{% if grafana.query_help[key] %} aria-describedby="q-{{ key }}-help"{% endif %} name="q_{{ key }}" rows="3">{{ q }}</textarea>
+    {% if grafana.query_help[key] %}<p class="help" id="q-{{ key }}-help">{{ grafana.query_help[key] }}</p>{% endif %}
+  </div>
+  {% endfor %}
+</fieldset>

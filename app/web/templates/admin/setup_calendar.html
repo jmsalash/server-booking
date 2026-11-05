@@ -1,20 +1,17 @@
-{% extends "admin/base.html" %}
-{% block title %}Setup: Calendar — Server booking{% endblock %}
-{% block admin_content %}
-<section class="panel">
-  <h1>Step 4 of 4 — Google Calendar (optional)</h1>
-  <p>Bookings can be mirrored to a shared Google Calendar. Create a service account, share the calendar with its e-mail address (“Make changes to events”), and upload its JSON key. You can skip this and configure it later under Admin → Integrations.</p>
-  {% if error %}<div class="banner banner--error">{{ error }}</div>{% endif %}
-  {% if message %}<div class="banner banner--warn">{{ message }}</div>{% endif %}
-  <form method="post" action="/admin/setup/calendar" class="form" enctype="multipart/form-data">
-    <label>Service-account JSON key <input type="file" name="sa_json" accept="application/json,.json"></label>
-    {% if calendar.key_set %}<p class="muted">A key is saved ({{ placeholder }}). Leave empty to keep it.</p>{% endif %}
-    <label>Calendar id <input name="calendar_id" value="{{ calendar.calendar_id }}" placeholder="…@group.calendar.google.com"></label>
-    <div class="actions">
-      <button type="submit" name="action" value="save">Save and finish</button>
-      <button type="submit" name="action" value="test">Test</button>
-      <button type="submit" name="action" value="skip" formnovalidate>Skip</button>
-    </div>
-  </form>
-</section>
+{% extends "admin/setup_base.html" %}
+{% block title %}Setup: Calendar — Lab Servers{% endblock %}
+{% block wizard_step %}calendar{% endblock %}
+{% block wizard_content %}
+<h1>Google Calendar <span class="badge">optional</span></h1>
+<p>Bookings can be mirrored to a shared Google Calendar. Create a service account, share the calendar with its e-mail address (“Make changes to events”), and upload its JSON key. You can skip this and configure it later under Admin → Integrations.</p>
+{% if error %}<div class="alert alert--danger" role="alert">{{ error }}</div>{% endif %}
+{% if message %}<div class="alert alert--success" role="status">{{ message }}</div>{% endif %}
+<form method="post" action="/admin/setup/calendar" class="form" enctype="multipart/form-data">
+  {% include "admin/_calendar_fields.html" %}
+  <div class="form-actions">
+    <button type="submit" name="action" value="save" class="btn btn--primary">Save and finish</button>
+    <button type="submit" name="action" value="test" class="btn">Test</button>
+    <button type="submit" name="action" value="skip" class="btn" formnovalidate>Skip</button>
+  </div>
+</form>
 {% endblock %}

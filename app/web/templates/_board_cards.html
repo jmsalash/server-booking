@@ -1,19 +1,25 @@
 {% macro bar(name, pct) -%}
-<div class="bar"><span class="bar__name">{{ name }}</span><span class="bar__track"><span class="bar__fill" style="width: {{ pct|round|int if pct is not none else 0 }}%"></span></span><span class="bar__pct">{{ (pct|round|int ~ '%') if pct is not none else '?' }}</span></div>
+<div class="bar"><span class="bar__name">{{ name }}</span><span class="bar__track" role="presentation"><span class="bar__fill" style="width: {{ pct|round|int if pct is not none else 0 }}%"></span></span><span class="bar__pct">{{ (pct|round|int ~ '%') if pct is not none else '?' }}</span></div>
 {%- endmacro %}
 <div class="cards">
   {% for c in cards %}
-  <article class="card">
-    <h2>{{ c.server.name }}</h2>
-    <p class="status"><span class="dot dot--{{ c.status.code.value }}"></span>{{ c.status.label }}</p>
-    {% if c.status.holders %}<p>In use by {{ c.status.holders|join(", ") }}</p>{% endif %}
-    {% if c.status.busy_until %}<p class="muted">Busy until {{ c.status.busy_until|day_hm(tz) }}</p>{% endif %}
-    {% if c.status.next_busy %}<p class="muted">Next busy {{ c.status.next_busy|day_hm(tz) }}</p>{% endif %}
+  <article class="card server-card">
+    <header class="server-card__head">
+      <h2 class="server-card__name">{{ c.server.name }}</h2>
+      <span class="chip chip--{{ c.status.code.value }}"><span class="dot dot--{{ c.status.code.value }}" aria-hidden="true"></span>{{ c.status.label }}</span>
+    </header>
+    {% if c.status.holders or c.status.busy_until or c.status.next_busy %}
+    <dl class="meta">
+      {% if c.status.holders %}<dt>In use by</dt><dd>{{ c.status.holders|join(", ") }}</dd>{% endif %}
+      {% if c.status.busy_until %}<dt>Busy until</dt><dd>{{ c.status.busy_until|day_hm(tz) }}</dd>{% endif %}
+      {% if c.status.next_busy %}<dt>Next booking</dt><dd>{{ c.status.next_busy|day_hm(tz) }}</dd>{% endif %}
+    </dl>
+    {% endif %}
     <div class="usage">
       {% if c.server.kind == "standalone" %}
-      <p class="muted">standalone — not monitored</p>
+      <p class="usage__none">standalone — not monitored</p>
       {% elif c.stale or c.usage is none %}
-      <p class="muted">usage: unknown</p>
+      <p class="usage__none">usage: unknown</p>
       {% else %}
       {{ bar("CPU", c.usage.cpu_pct) }}
       {{ bar("RAM", c.usage.ram_pct) }}
@@ -24,13 +30,13 @@
       {% endif %}
     </div>
     <div class="actions">
-      {% if c.server.enabled %}<a class="button" href="/book?server_id={{ c.server.id }}">Book</a>{% endif %}
+      {% if c.server.enabled %}<a class="btn btn--primary btn--sm" href="/book?server_id={{ c.server.id }}">Book</a>{% endif %}
       {% if c.status.code.value != "available" %}
-      <form method="post" action="/watch/{{ c.server.id }}" class="inline"><button type="submit">Notify me when free</button></form>
+      <form method="post" action="/watch/{{ c.server.id }}" class="inline"><button type="submit" class="btn btn--sm">Notify me when free</button></form>
       {% endif %}
     </div>
   </article>
   {% else %}
-  <p class="muted">No servers yet.</p>
+  <div class="empty"><p class="empty__title">No servers yet</p><p>An admin can add servers under Admin → Servers.</p></div>
   {% endfor %}
 </div>

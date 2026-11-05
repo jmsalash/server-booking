@@ -35,10 +35,6 @@ NVIDIA_SMI_QUERIES: dict[str, str] = {
     "discover_gpus": 'count by (instance) (nvidia_smi_utilization_gpu_ratio)',
 }
 
-# Transitional alias: app/web/admin.py still imports this name for the help text (it now
-# holds the nvidia_gpu_exporter alternative). Drop once admin.py uses NVIDIA_SMI_QUERIES.
-DCGM_QUERIES = NVIDIA_SMI_QUERIES
-
 _OLD_INST = 'instance=~"{instance_re}(:.*)?"'
 _DCGM_HOSTNAME = {
     "gpu_util": 'DCGM_FI_DEV_GPU_UTIL{Hostname="{instance}"}',

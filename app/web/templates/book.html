@@ -1,56 +1,91 @@
 {% extends "base.html" %}
-{% block title %}Book — Server booking{% endblock %}
+{% block title %}Book — Lab Servers{% endblock %}
 {% block content %}
-<section class="panel">
-  <h1>Book a server</h1>
-  {% if error %}<div class="banner banner--error">{{ error }}</div>{% endif %}
-  {% if share_with %}<div class="banner banner--warn">This server is in use by {{ share_with }}. Resources will be shared.</div>{% endif %}
-  {% if not servers %}
-  <p class="muted">No servers are available for booking.</p>
-  {% else %}
-  <form method="post" action="/book" class="form">
-    <label>Server
-      <select name="server_id" hx-get="/book" hx-trigger="change" hx-target="body" hx-push-url="true">
-        {% for s in servers %}
-        <option value="{{ s.id }}" {% if selected and s.id == selected.id %}selected{% endif %}>{{ s.name }}{% if s.has_gpu %} (GPU){% endif %}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Start <input type="datetime-local" name="start" step="3600" value="{{ values.start }}" required></label>
-    <label>End <input type="datetime-local" name="end" step="3600" value="{{ values.end }}" required></label>
-    <fieldset>
-      <legend>Resources</legend>
-      <label><input type="radio" name="resource" value="cpu" {% if values.resource != "cpu_gpu" %}checked{% endif %}> CPU only</label>
-      {% if selected and selected.has_gpu %}
-      <label><input type="radio" name="resource" value="cpu_gpu" {% if values.resource == "cpu_gpu" %}checked{% endif %}> CPU + GPU</label>
-      {% endif %}
-    </fieldset>
+<div class="page-head">
+  <div>
+    <h1>Book a server</h1>
     <p class="muted">Times are in {{ tz }}; bookings start and end on the hour.</p>
-    {% if share_with %}
-    <input type="hidden" name="confirm_shared" value="1">
-    <input type="hidden" name="warned_server_id" value="{{ warned.server_id }}">
-    <input type="hidden" name="warned_start" value="{{ warned.start }}">
-    <input type="hidden" name="warned_end" value="{{ warned.end }}">
-    <button type="submit">Book and share</button>
+  </div>
+</div>
+{% if error %}<div class="alert alert--danger" role="alert">{{ error }}</div>{% endif %}
+{% if not servers %}
+<div class="empty"><p class="empty__title">Nothing to book</p><p>No servers are available for booking.</p></div>
+{% else %}
+<div class="split">
+  <section class="card" aria-labelledby="book-form-title">
+    <h2 id="book-form-title" class="visually-hidden">Booking details</h2>
+    <form method="post" action="/book" class="form form--full">
+      <div class="field">
+        <label for="book-server">Server</label>
+        <select id="book-server" name="server_id" hx-get="/book" hx-trigger="change" hx-target="body" hx-push-url="true">
+          {% for s in servers %}
+          <option value="{{ s.id }}" {% if selected and s.id == selected.id %}selected{% endif %}>{{ s.name }}{% if s.has_gpu %} (GPU){% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="book-start">Start</label>
+          <input id="book-start" type="datetime-local" name="start" step="3600" value="{{ values.start }}" required>
+        </div>
+        <div class="field">
+          <label for="book-end">End</label>
+          <input id="book-end" type="datetime-local" name="end" step="3600" value="{{ values.end }}" required>
+        </div>
+      </div>
+      <fieldset class="fieldset--plain">
+        <legend>Resources</legend>
+        <div class="radio-cards">
+          <label class="radio-card">
+            <input type="radio" name="resource" value="cpu" {% if values.resource != "cpu_gpu" %}checked{% endif %}>
+            <span class="radio-card__title">CPU only</span>
+            <span class="radio-card__desc">CPU cores and RAM</span>
+          </label>
+          {% if selected and selected.has_gpu %}
+          <label class="radio-card">
+            <input type="radio" name="resource" value="cpu_gpu" {% if values.resource == "cpu_gpu" %}checked{% endif %}>
+            <span class="radio-card__title">CPU + GPU</span>
+            <span class="radio-card__desc">Includes the server's GPU{{ "s" if selected.gpu_count and selected.gpu_count > 1 }}</span>
+          </label>
+          {% endif %}
+        </div>
+        {% if selected and not selected.has_gpu %}<p class="help mt-2">{{ selected.name }} has no GPU.</p>{% endif %}
+      </fieldset>
+      {% if share_with %}
+      <input type="hidden" name="confirm_shared" value="1">
+      <input type="hidden" name="warned_server_id" value="{{ warned.server_id }}">
+      <input type="hidden" name="warned_start" value="{{ warned.start }}">
+      <input type="hidden" name="warned_end" value="{{ warned.end }}">
+      <div class="alert alert--warning" role="alert">
+        <p><strong>This server is in use by {{ share_with }}. Resources will be shared.</strong></p>
+        <p>You will share CPU, RAM and GPU with the current booking. Confirm to book anyway.</p>
+        <div class="actions"><button type="submit" class="btn btn--primary">Book and share</button></div>
+      </div>
+      {% else %}
+      <div class="form-actions"><button type="submit" class="btn btn--primary">Book</button></div>
+      {% endif %}
+    </form>
+  </section>
+  {% if selected %}
+  <section class="card" aria-labelledby="timeline-title">
+    <div class="card__head">
+      <h2 id="timeline-title">{{ selected.name }} — next 14 days</h2>
+    </div>
+    {% if timeline %}
+    <ul class="timeline">
+      {% for b in timeline %}
+      <li>
+        <span class="timeline__when">{{ b.start|day_hm(tz) }} – {{ b.end|day_hm(tz) }}</span>
+        <span class="timeline__who">{{ b.user_name }} <span class="badge">{{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}</span>{% if b.is_shared %} <span class="badge badge--shared">shared</span>{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ul>
     {% else %}
-    <button type="submit">Book</button>
+    <div class="empty empty--sm">No bookings in the next 14 days.</div>
     {% endif %}
-  </form>
+  </section>
   {% endif %}
-</section>
-{% if selected %}
-<section class="panel">
-  <h2>{{ selected.name }} — next 14 days</h2>
-  {% if timeline %}
-  <ul class="timeline">
-    {% for b in timeline %}
-    <li>{{ b.start|day_hm(tz) }} – {{ b.end|day_hm(tz) }} · {{ b.user_name }} · {{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}{% if b.is_shared %} · shared{% endif %}</li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="muted">No bookings in the next 14 days.</p>
-  {% endif %}
-</section>
+</div>
 {% endif %}
-{% include "_legend.html" %}
+<div class="mt-5">{% include "_legend.html" %}</div>
 {% endblock %}

@@ -1,16 +1,24 @@
 {% extends "base.html" %}
-{% block title %}Log in — Server booking{% endblock %}
+{% block title %}Log in — Lab Servers{% endblock %}
 {% block content %}
-<section class="panel login">
-  <h1>Log in</h1>
+<section class="card login">
+  <h1>Log in to Lab Servers</h1>
   {% if not configured %}
-  <p>The system is not set up yet.</p>
-  <p><a href="/admin/setup">Go to setup</a></p>
+  <div class="alert alert--info">
+    <p>The system is not set up yet.</p>
+    <p><a href="/admin/setup">Go to setup</a></p>
+  </div>
   {% else %}
-  <p><a class="button" href="{{ link }}" target="_blank" rel="noopener">Log in with Telegram</a></p>
-  <p>Telegram will ask you to confirm — tap “Yes, log me in”.</p>
-  <div hx-get="/login/poll/{{ token }}" hx-trigger="every 2s" hx-swap="outerHTML">
-    <p class="muted">Waiting for confirmation…</p>
+  <p class="muted">Log in with your Telegram account — no password needed.</p>
+  <p><a class="btn btn--telegram" href="{{ link }}" target="_blank" rel="noopener">Log in with Telegram</a></p>
+  <h2 class="eyebrow">What happens next</h2>
+  <ol class="login-steps">
+    <li><span>Telegram opens a chat with the lab bot. Tap <strong>Start</strong> if asked.</span></li>
+    <li><span>Telegram will ask you to confirm — tap “Yes, log me in”.</span></li>
+    <li><span>Come back to this tab: it logs you in automatically.</span></li>
+  </ol>
+  <div class="waiting" hx-get="/login/poll/{{ token }}" hx-trigger="every 2s" hx-swap="outerHTML">
+    <span class="spinner" aria-hidden="true"></span><p>Waiting for confirmation…</p>
   </div>
   {% endif %}
 </section>
