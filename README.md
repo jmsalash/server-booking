@@ -104,8 +104,8 @@ bookable (and can be shared) but are never reclaimed.
 ## Sharing and idle reclaim
 
 **Sharing.** Sharing is chosen per booking by the person booking: tick
-"Others can share this machine with me" on the booking form (or use "Let others
-share" under My bookings, as long as nobody has joined yet). Someone else may
+"Allow sharing" on the booking form (or use "Let others share" under My
+bookings, as long as nobody has joined yet). Someone else may
 then book an overlapping time — the board shows the machine purple ("In use —
 can share") with a **Join** button, and the booking form asks them to confirm
 ("You'll be sharing gpu-01 with Ana from … to …"). The owner gets a Telegram

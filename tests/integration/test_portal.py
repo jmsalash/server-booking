@@ -782,7 +782,7 @@ async def test_book_form_shareable_checkbox(client, logged_in, db, make_server):
     s = await make_server(name="srv")
     await db.commit()
     page = await client.get(f"/book?server_id={s.id}")
-    assert "Others can share this machine with me" in page.text
+    assert "Allow sharing" in page.text
     r = await client.post("/book", data={"server_id": s.id, "start": "2026-11-10T15:00",
                                          "end": "2026-11-10T17:00", "resource": "cpu",
                                          "shareable": "on"})

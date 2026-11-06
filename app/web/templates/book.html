@@ -53,8 +53,8 @@
       </fieldset>
       {% if not share_with %}
       <div class="check-field">
-        <label class="check"><input type="checkbox" name="shareable" aria-describedby="book-share-help" {% if values.shareable %}checked{% endif %}> Others can share this machine with me</label>
-        <p class="help" id="book-share-help">One other person may book the same time. You'll get a Telegram message when they do.</p>
+        <label class="check"><input type="checkbox" name="shareable" aria-describedby="book-share-help" {% if values.shareable %}checked{% endif %}> Allow sharing</label>
+        <p class="help" id="book-share-help">One more person can join your booking.</p>
       </div>
       {% endif %}
       {% if share_with %}
