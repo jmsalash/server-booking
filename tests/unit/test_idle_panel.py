@@ -77,8 +77,8 @@ def test_active_unknown_and_short_quiet():
     assert idle_panel([], now, R, False, 0, None).activity == "Usage unknown"
 
 
-def test_cpu_only_booking_ignores_gpu():
+def test_busy_gpu_is_active_whatever_was_booked():
     now = L("2026-11-10T14:20")
     busy_gpu = snaps(now, 40, gpu_util=95.0)
-    assert idle_panel(busy_gpu, now, R, False, 0, None).activity == "Quiet for 40 min"
+    assert idle_panel(busy_gpu, now, R, False, 0, None).activity == "Active"
     assert idle_panel(busy_gpu, now, R, True, 0, None).activity == "Active"

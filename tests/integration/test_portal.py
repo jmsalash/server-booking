@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 
 import app.clock
 from app.domain.booking_rules import BookingError
-from app.domain.types import ServerUsage
+from app.domain.types import GpuUsage, ServerUsage
 from app.integrations.telegram_gateway import MemberStatus
 from app.domain.rules import Rules
 from app.models import Booking, LoginToken, OutboxItem, Session, WatchSubscription
@@ -717,12 +717,14 @@ async def _running(db, user, server, **kw):
 
 
 async def _readings(db, server, minutes, cpu=1.0, until=NOW):
-    """A busy reading, then quiet ones every 5 min for `minutes` up to `until`."""
+    """A busy reading, then quiet ones every 5 min for `minutes` up to `until`
+    (with one idle GPU reading on GPU servers)."""
+    gpus = tuple(GpuUsage(1.0, 5.0) for _ in range(server.gpu_count or 0))
     await usage.save_snapshot(db, server.id, ServerUsage(
-        until - timedelta(minutes=minutes + 5), 90.0, 30.0, ()))
+        until - timedelta(minutes=minutes + 5), 90.0, 30.0, gpus))
     for m in range(minutes, -1, -5):
         await usage.save_snapshot(db, server.id, ServerUsage(until - timedelta(minutes=m),
-                                                             cpu, 30.0, ()))
+                                                             cpu, 30.0, gpus))
 
 
 async def test_me_still_using_button_only_with_warnings(client, logged_in, db, make_server):

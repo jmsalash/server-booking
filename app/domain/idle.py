@@ -32,14 +32,12 @@ class IdleDecision:
     warning_number: int | None
 
 
-def _is_quiet(
-    state: IdleState, latest: ServerUsage, resource: str, rules: Rules
-) -> bool:
+def _is_quiet(state: IdleState, latest: ServerUsage, rules: Rules) -> bool:
+    """Quiet means the whole machine is quiet: any CPU or GPU activity counts as use,
+    whatever the booking booked (a CPU-only booking running GPU jobs is still working)."""
     if not latest.cpu_pct < rules.idle_cpu_pct:
         return False
-    if resource == "cpu_gpu" and not all(
-        g.util_pct < rules.idle_gpu_util_pct for g in latest.gpus
-    ):
+    if not all(g.util_pct < rules.idle_gpu_util_pct for g in latest.gpus):
         return False
     if state.ram_baseline is not None and not (
         abs(latest.ram_pct - state.ram_baseline) < rules.idle_ram_delta_pp
@@ -69,30 +67,25 @@ def evaluate_machine_idle(
     states: Sequence[IdleState],
     latest: ServerUsage | None,
     now: datetime,
-    resources: Sequence[str],
     rules: Rules,
 ) -> list[IdleDecision]:
     """Idle step for every booking running on one machine (one, or two when shared).
 
-    Each booking is judged on what it booked: a "cpu" booking only on CPU and RAM (GPU
-    activity is ignored), a "cpu_gpu" booking also on GPU utilisation. Each booking keeps its
-    own idle clock and warning count, so an "I'm still using it" protects only that booking.
+    Quietness is the machine's (CPU and every GPU low, RAM steady against each booking's own
+    baseline). Each booking keeps its own idle clock and warning count, so an "I'm still
+    using it" protects only that booking.
     """
-    return [_evaluate_one(s, latest, now, r, rules) for s, r in zip(states, resources, strict=True)]
+    return [_evaluate_one(s, latest, now, rules) for s in states]
 
 
 def _evaluate_one(
-    state: IdleState, latest: ServerUsage | None, now: datetime, resource: str, rules: Rules
+    state: IdleState, latest: ServerUsage | None, now: datetime, rules: Rules
 ) -> IdleDecision:
-    missing = (
-        latest is None
-        or is_stale(latest.ts, now, rules)
-        or (resource == "cpu_gpu" and not latest.gpus)
-    )
+    missing = latest is None or is_stale(latest.ts, now, rules)
     if missing:
         return IdleDecision(IdleAction.NONE, IdleState(state.warnings, None, None), None)
     assert latest is not None
-    if not _is_quiet(state, latest, resource, rules):
+    if not _is_quiet(state, latest, rules):
         return IdleDecision(IdleAction.NONE, IdleState(0, None, None), None)
     return _advance(state, latest, now, rules)
 
@@ -101,10 +94,9 @@ def evaluate_idle(
     state: IdleState,
     latest: ServerUsage | None,
     now: datetime,
-    resource: str,
     rules: Rules,
 ) -> IdleDecision:
-    return _evaluate_one(state, latest, now, resource, rules)
+    return _evaluate_one(state, latest, now, rules)
 
 
 QUIET_MAX_GAP = timedelta(minutes=10)  # about twice the metrics poll interval
@@ -114,7 +106,9 @@ def _snapshot_quiet(s: ServerUsage, baseline_ram: float, has_gpu: bool, rules: R
     """`_is_quiet`'s thresholds, for one snapshot of the whole machine."""
     if not s.cpu_pct < rules.idle_cpu_pct:
         return False
-    if has_gpu and (not s.gpus or not all(g.util_pct < rules.idle_gpu_util_pct for g in s.gpus)):
+    if has_gpu and not s.gpus:  # GPU readings missing: can't call it quiet
+        return False
+    if not all(g.util_pct < rules.idle_gpu_util_pct for g in s.gpus):
         return False
     return abs(s.ram_pct - baseline_ram) < rules.idle_ram_delta_pp
 
@@ -176,18 +170,18 @@ def next_idle_step_at(idle_since: datetime | None, now: datetime, rules: Rules) 
 
 
 def idle_panel(
-    snapshots: Sequence[ServerUsage], now: datetime, rules: Rules, uses_gpu: bool,
+    snapshots: Sequence[ServerUsage], now: datetime, rules: Rules, has_gpu: bool,
     warnings: int, idle_since: datetime | None,
 ) -> IdlePanel:
     """What My bookings shows for one running booking on a monitored machine.
 
-    Quiet is judged on what the booking booked (a CPU-only booking ignores the GPU), as for
-    the idle warnings; the quiet time is wall-clock, the next warning counts working hours.
+    Quiet means the whole machine is quiet (CPU and GPUs), as for the idle warnings; the
+    quiet time is wall-clock, the next warning counts working hours.
     """
     latest = max(snapshots, key=lambda s: s.ts, default=None)
     unknown = (latest is None or is_stale(latest.ts, now, rules)
-               or (uses_gpu and not latest.gpus))
-    since = None if unknown else quiet_since(snapshots, now, rules, uses_gpu)
+               or (has_gpu and not latest.gpus))
+    since = None if unknown else quiet_since(snapshots, now, rules, has_gpu)
     quiet = since is not None and now - since >= POLL
     if unknown:
         activity = "Usage unknown"

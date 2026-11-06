@@ -45,8 +45,8 @@ async def idle_check(
 ) -> list[tuple[int, IdleAction]]:
     """Advance idle tracking for every running booking.
 
-    Each booking is judged on what it booked (CPU-only bookings ignore the GPU). On a shared
-    machine each owner is warned with their own "I'm still using it" button, and only a booking
+    The machine counts as quiet only when CPU and GPUs are all quiet, whatever was booked. On
+    a shared machine each owner is warned with their own "I'm still using it" button, and only a booking
     that ran out of warnings is reclaimed — the other keeps the machine.
     """
     rules = await store.get_rules()
@@ -54,8 +54,7 @@ async def idle_check(
     for server_id, bookings in await _active_now(db, now, lock=True):
         states = [IdleState(b.idle_warnings, b.idle_since, b.idle_ram_baseline) for b in bookings]
         latest = await usage.latest(db, server_id)
-        decisions = evaluate_machine_idle(states, latest, now, [b.resource for b in bookings],
-                                          rules)
+        decisions = evaluate_machine_idle(states, latest, now, rules)
         for b, decision in zip(bookings, decisions):
             b.idle_warnings = decision.state.warnings
             b.idle_since = decision.state.idle_since

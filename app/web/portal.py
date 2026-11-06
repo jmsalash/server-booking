@@ -376,8 +376,7 @@ async def _idle_panels(
             continue
         row = await db.get(Booking, b.id)
         snaps = await usage_svc.recent(db, server.id, now - board.QUIET_LOOKBACK)
-        uses_gpu = server.has_gpu and b.resource == "cpu_gpu"
-        out[b.id] = idle_panel(snaps, now, rules, uses_gpu, b.idle_warnings, row.idle_since)
+        out[b.id] = idle_panel(snaps, now, rules, server.has_gpu, b.idle_warnings, row.idle_since)
     return out
 
 

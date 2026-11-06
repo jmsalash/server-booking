@@ -126,10 +126,10 @@ Telegram warning (at any hour) when its RAM or a disk reaches 90 % (admin-editab
 disks come from the optional `disk` query, one series per mount point); it is
 repeated only after the value has dropped 5 percentage points below and crossed again.
 
-**Idle reclaim.** If a booked server stays idle for 120 min (CPU < 10 %, GPU
-util < 5 % for CPU + GPU bookings, RAM change < 2 percentage points), the user
-is warned. After 3 warnings the booking is released. Each booking is judged on
-what it booked: a CPU only booking ignores the GPU entirely. On a shared machine
+**Idle reclaim.** If a booked server stays idle for 120 min (CPU < 10 %, every
+GPU < 5 % utilisation, RAM change < 2 percentage points), the user is warned.
+After 3 warnings the booking is released. Any CPU or GPU activity counts as use,
+whatever was booked (CPU only or CPU + GPU). On a shared machine
 each person is warned separately, with their own "I'm still using it" button,
 and only a booking that runs out of warnings is released — the other keeps the
 machine. Metrics older than 15 min count as stale and snapshots are

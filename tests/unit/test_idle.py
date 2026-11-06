@@ -25,13 +25,13 @@ def quiet(now, i):
     return ServerUsage(now, 2.0, 30.0, (GpuUsage(1.0, 5.0),))
 
 
-def drive(start, minutes, sample, resource="cpu_gpu", state=None):
+def drive(start, minutes, sample, state=None):
     """Return [(now, decision)] stepping every 5 min; sample(now, i) may return None."""
     state = state or IdleState(0, None, None)
     out = []
     for i in range(minutes // 5 + 1):
         now = start + timedelta(minutes=5 * i)
-        dec = evaluate_idle(state, sample(now, i), now, resource, RULES)
+        dec = evaluate_idle(state, sample(now, i), now, RULES)
         state = dec.state
         out.append((now, dec))
         if dec.action == RECLAIM:  # caller ends the booking
@@ -85,7 +85,7 @@ def test_night_does_not_count():
 
 def test_missing_data_resets_window_not_warnings():
     state = IdleState(2, L("2026-11-10T09:00"), 30.0)
-    dec = evaluate_idle(state, None, L("2026-11-10T10:00"), "cpu_gpu", RULES)
+    dec = evaluate_idle(state, None, L("2026-11-10T10:00"), RULES)
     assert dec.action == NONE
     assert dec.state == IdleState(2, None, None)
     assert dec.warning_number is None
@@ -99,20 +99,14 @@ def test_stale_snapshot_never_reclaims():
     state = IdleState(3, L("2026-11-10T09:00"), 30.0)
     now = L("2026-11-10T17:00")
     stale = ServerUsage(now - timedelta(minutes=20), 2.0, 30.0, ())
-    dec = evaluate_idle(state, stale, now, "cpu_gpu", RULES)
+    dec = evaluate_idle(state, stale, now, RULES)
     assert dec.action == NONE
     assert dec.state == IdleState(3, None, None)
 
 
-def test_cpu_booking_ignores_gpu_util():
-    busy_gpu = lambda now, i: ServerUsage(now, 2.0, 30.0, (GpuUsage(90.0, 50.0),))
-    res = drive(L("2026-11-10T09:00"), 125, busy_gpu, resource="cpu")
-    assert events(res) == [("Tue 2026-11-10T11:00", WARN)]
-
-
-def test_gpu_booking_busy_gpu_not_quiet():
+def test_busy_gpu_not_quiet():
     busy_gpu = lambda now, i: ServerUsage(now, 2.0, 30.0, (GpuUsage(1.0, 5.0), GpuUsage(90.0, 50.0)))
-    res = drive(L("2026-11-10T09:00"), 245, busy_gpu, resource="cpu_gpu")
+    res = drive(L("2026-11-10T09:00"), 245, busy_gpu)
     assert events(res) == []
     assert res[-1][1].state == IdleState(0, None, None)
 
@@ -135,15 +129,13 @@ def test_window_across_dst_end():
     assert events(res) == [("Mon 2026-10-26T10:00", WARN)]
 
 
-def test_cpu_gpu_booking_with_no_gpu_data_is_missing_data():
+def test_machine_without_gpus_judged_on_cpu():
     no_gpu = lambda now, i: ServerUsage(now, 2.0, 30.0, ())
-    state = IdleState(2, None, None)
-    res = drive(L("2026-11-10T09:00"), 600, no_gpu, resource="cpu_gpu", state=state)
-    assert events(res) == []
-    assert all(d.state == IdleState(2, None, None) for n, d in res)
+    res = drive(L("2026-11-10T09:00"), 125, no_gpu)
+    assert events(res) == [("Tue 2026-11-10T11:00", WARN)]
 
 
-def drive_pair(start, minutes, sample, resources=("cpu_gpu", "cpu_gpu"), ack=None):
+def drive_pair(start, minutes, sample, ack=None):
     """Two bookings on one machine; `ack(now)` returns the index whose owner says still using."""
     states = [IdleState(0, None, None), IdleState(0, None, None)]
     out = []
@@ -151,7 +143,7 @@ def drive_pair(start, minutes, sample, resources=("cpu_gpu", "cpu_gpu"), ack=Non
         now = start + timedelta(minutes=5 * i)
         if ack and (k := ack(now)) is not None:
             states[k] = IdleState(0, None, None)
-        decs = evaluate_machine_idle(states, sample(now, i), now, resources, RULES)
+        decs = evaluate_machine_idle(states, sample(now, i), now, RULES)
         states = [d.state for d in decs]
         out.append((now, decs))
     return out
@@ -190,22 +182,19 @@ def test_shared_ram_change_resets_the_booking_whose_baseline_moved():
     t = L("2026-11-10T10:00")
     states = [IdleState(1, L("2026-11-10T09:00"), 30.0), IdleState(0, None, None)]
     decs = evaluate_machine_idle(states, ServerUsage(t, 2.0, 35.0, (GpuUsage(1.0, 5.0),)),
-                                 t, ["cpu", "cpu"], RULES)
+                                 t, RULES)
     assert decs[0].state == IdleState(0, None, None)
     assert decs[1].state == IdleState(0, t, 35.0)  # starts its own quiet clock
 
 
-def test_cpu_only_booking_ignores_gpu_activity():
+def test_gpu_activity_keeps_any_booking_alive():
+    """A CPU-only booking whose machine has a busy GPU is not idle (user report)."""
     def gpu_busy(now, i):
         return ServerUsage(now, 2.0, 30.0, (GpuUsage(95.0, 60.0),))
 
-    # Alone: GPU at 95% does not keep a CPU-only booking alive.
-    res = drive(L("2026-11-10T09:00"), 125, gpu_busy, resource="cpu")
-    assert events(res) == [("Tue 2026-11-10T11:00", WARN)]
-    # Shared with a GPU user: only the CPU-only booking is warned.
-    res = drive_pair(L("2026-11-10T09:00"), 125, gpu_busy, resources=("cpu", "cpu_gpu"))
-    assert pair_events(res, 0) == [("Tue 2026-11-10T11:00", WARN)]
-    assert pair_events(res, 1) == []
+    assert events(drive(L("2026-11-10T09:00"), 245, gpu_busy)) == []
+    res = drive_pair(L("2026-11-10T09:00"), 245, gpu_busy)
+    assert pair_events(res, 0) == pair_events(res, 1) == []
 
 
 QT = L("2026-11-10T14:00")
@@ -248,7 +237,8 @@ def test_quiet_since_stale_or_missing():
 def test_quiet_since_gpu_active():
     busy = series(10, gpu=90.0)
     assert quiet_since(busy, QT, RULES, has_gpu=True) is None
-    assert quiet_since(busy, QT, RULES, has_gpu=False) == QT - timedelta(minutes=45)
+    # A busy GPU means the machine is in use, whatever was booked.
+    assert quiet_since(busy, QT, RULES, has_gpu=False) is None
     assert quiet_since(series(3, gpus=False), QT, RULES, has_gpu=True) is None
 
 
