@@ -16,6 +16,15 @@ NOW = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
 class FakeBot:
     username = "lab_bot"
 
+    def __init__(self, log=None, fail=False):
+        self.log = log if log is not None else []
+        self.fail = fail
+
+    async def set_my_commands(self, commands, scope=None):
+        if self.fail:
+            raise RuntimeError("telegram down")
+        self.log.append(("menu", scope.type, len(commands)))
+
     async def get_me(self):
         return type("Me", (), {"id": 1, "username": "b"})()
 
@@ -35,7 +44,7 @@ class FakeApp:
     def __init__(self, token, log):
         self.token = token
         self.log = log
-        self.bot = FakeBot()
+        self.bot = FakeBot(log)
         self.updater = FakeUpdater(log)
 
     async def initialize(self):
@@ -93,6 +102,28 @@ async def test_reconcile_starts_and_restarts_bot_on_token_change(
     assert ("stop", "tok1") in app_log and ("shutdown", "tok1") in app_log
     assert app_log.index(("shutdown", "tok1")) < app_log.index(("initialize", "tok2"))
     assert ("start", "tok2") in app_log
+
+
+async def test_bot_start_registers_command_menu(worker, app_log, sessionmaker, box):
+    await _set_token(sessionmaker, box, "tok1")
+    await worker.reconcile(NOW)
+    assert ("menu", "all_private_chats", 6) in app_log
+    assert ("menu", "all_group_chats", 4) in app_log
+    assert app_log.index("polling") < app_log.index(("menu", "all_private_chats", 6))
+
+
+async def test_command_menu_failure_does_not_stop_bot(worker, app_log, sessionmaker, box,
+                                                      monkeypatch):
+    class NoMenu(FakeApp):
+        def __init__(self, token, log):
+            super().__init__(token, log)
+            self.bot = FakeBot(log, fail=True)
+
+    monkeypatch.setattr(worker_mod, "build_application", lambda t, c: NoMenu(t, app_log))
+    await _set_token(sessionmaker, box, "tok1")
+    await worker.reconcile(NOW)
+    assert worker.bot_app.token == "tok1"
+    assert ("shutdown", "tok1") not in app_log
 
 
 async def test_failing_bot_start_is_retried_not_raised(worker, app_log, sessionmaker, box, monkeypatch):

@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.calendar import Bar, Week, layout_bars
-from app.domain.types import GpuUsage
+from app.domain.types import GpuUsage, ServerInfo
 from app.models import Booking, MetricSnapshot, Server, User
 from app.services.board import to_view
 from app.services.inventory import list_servers
@@ -24,7 +24,7 @@ class CalendarRow:
     bars: list[Bar]
 
 
-def _sub(server: Server, gpus: list[dict] | None) -> str:
+def machine_sub(server: Server | ServerInfo, gpus: list[dict] | None) -> str:
     """The board card's sub-line: GPU models from the last reading, else the count."""
     models = []
     for g in gpus or []:
@@ -62,5 +62,6 @@ async def build_week(db: AsyncSession, week: Week, now: datetime) -> list[Calend
     for b, name in rows.all():
         by_server[b.server_id].append(to_view(b, name))
     gpus = await _latest_gpus(db)
-    return [CalendarRow(s, _sub(s, gpus.get(s.id)), layout_bars(by_server[s.id], week, now))
+    return [CalendarRow(s, machine_sub(s, gpus.get(s.id)),
+                        layout_bars(by_server[s.id], week, now))
             for s in servers]

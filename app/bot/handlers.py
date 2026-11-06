@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import telegram
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from telegram import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     Application,
@@ -26,7 +27,9 @@ from telegram.ext import (
 )
 
 from app import clock
+from app.bot import booking_flow as flow
 from app.bot import format as fmt
+from app.bot.reply import Reply
 from app.crypto import SecretBox
 from app.integrations.telegram_gateway import MemberStatus, TelegramGateway
 from app.models import Server, TelegramTopic, User
@@ -57,7 +60,52 @@ STILL_USING_REFUSED = "That booking isn't yours or has ended."
 NOTIFY_USAGE = "Usage: /notify <server>"
 UNKNOWN_ACTION = "Unknown action."
 
-COMMANDS = ("status", "free", "notify")
+PRIVATE_TO_BOOK = "Message me privately to book"
+
+
+@dataclass(frozen=True)
+class Command:
+    name: str
+    description: str  # shown in Telegram's command menu and in /help (<= 256 chars)
+    in_group: bool = True  # False: private chat only (the group gets a pointer to the DM)
+
+
+# The one list of user commands: the handlers, the menu and /help are all built from it.
+MENU = (
+    Command("status", "All machines and who is using them"),
+    Command("free", "Machines free right now"),
+    Command("notify", "Message me when a machine is free: /notify gpu-05"),
+    Command("book", "Book a machine, starting now", in_group=False),
+    Command("mybookings", "Your bookings: extend, end or cancel", in_group=False),
+    Command("help", "What this bot can do"),
+)
+COMMANDS = tuple(c.name for c in MENU)
+PRIVATE_ONLY = frozenset(c.name for c in MENU if not c.in_group)
+
+
+def menu(private: bool) -> list[BotCommand]:
+    return [BotCommand(c.name, c.description) for c in MENU if private or c.in_group]
+
+
+async def register_commands(bot) -> None:
+    """Publish the command menus; a failure is only logged, the bot keeps running."""
+    for scope, private in ((BotCommandScopeAllPrivateChats(), True),
+                           (BotCommandScopeAllGroupChats(), False)):
+        try:
+            await bot.set_my_commands(menu(private), scope=scope)
+        except Exception as e:  # the menu is a nicety: never stop the bot over it
+            log.warning("could not set the bot command menu (%s): %s", scope.type, e)
+
+
+def help_text(private: bool, bot: str | None, portal: str) -> str:
+    lines = ["What I can do:"]
+    lines += [f"/{c.name} — {c.description}" for c in MENU if private or c.in_group]
+    if not private:
+        names = " and ".join(f"/{c.name}" for c in MENU if not c.in_group)
+        lines.append(f"{names} work in a private chat with " + (f"@{bot}." if bot else "me."))
+    if portal:
+        lines.append(f"More: {portal}/about")
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -65,13 +113,6 @@ class BotContext:
     sessionmaker: async_sessionmaker[AsyncSession]
     gateway: TelegramGateway
     box: SecretBox
-
-
-@dataclass(frozen=True)
-class Reply:
-    text: str | None  # None: nothing to say
-    buttons: list[tuple[str, str]] | None = None
-    ephemeral: bool = False  # group chatter that should clean itself up
 
 
 @asynccontextmanager
@@ -224,6 +265,16 @@ async def on_command(
             return Reply(MEMBERS_ONLY)
 
         portal = await _portal(store)
+        if command == "help":
+            return Reply(help_text(is_private, await store.get(K.TG_BOT_USERNAME), portal))
+        if command in PRIVATE_ONLY:
+            if not is_private:
+                bot = await store.get(K.TG_BOT_USERNAME)
+                return Reply(f"{PRIVATE_TO_BOOK}: @{bot}" if bot else f"{PRIVATE_TO_BOOK}.")
+            user = await _get_or_create_user(db, tg, status)
+            if command == "book":
+                return await flow.book_step(db, store, user, [], now)
+            return await flow.my_bookings(db, store, user, now)
         tz = (await store.get_rules()).timezone
         arg = " ".join(args).strip()
 
@@ -277,12 +328,34 @@ async def _still_using(ctx: BotContext, tg: TgUser, raw_id: str, now: datetime) 
     return Reply(STILL_USING_REFUSED)
 
 
+async def _booking_action(ctx: BotContext, tg: TgUser, data: str, now: datetime) -> Reply:
+    """A /book or /mybookings button. Members only, like the commands."""
+    head, *parts = data.split(":")
+    if head == flow.CANCEL_FLOW and not parts:
+        return Reply(flow.FLOW_CANCELLED)
+    async with _session(ctx) as (db, store):
+        group = await store.get(K.TG_GROUP_ID)
+        if group is None:
+            return Reply(NOT_SET_UP)
+        status = await ctx.gateway.get_member_status(group, tg.id)
+        if status == MemberStatus.NOT_MEMBER:
+            return Reply(MEMBERS_ONLY)
+        user = await _get_or_create_user(db, tg, status)
+        step = flow.book_step if head == flow.BOOK else flow.mine_step
+        try:
+            return await step(db, store, user, parts, now)
+        except flow.BadData:
+            return Reply(UNKNOWN_ACTION)
+
+
 async def on_callback(ctx: BotContext, tg: TgUser, data: str, now: datetime) -> Reply:
     action, _, value = data.partition(":")
     if action == "login" and value:
         return await _login(ctx, tg, value, now)
     if action == "still" and value:
         return await _still_using(ctx, tg, value, now)
+    if action in (flow.BOOK, flow.CANCEL_FLOW, flow.MINE):
+        return await _booking_action(ctx, tg, data, now)
     return Reply(UNKNOWN_ACTION)
 
 

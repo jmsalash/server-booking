@@ -9,7 +9,7 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.bot.handlers import BotContext, build_application
+from app.bot.handlers import BotContext, build_application, register_commands
 from app.clock import utcnow
 from app.crypto import SecretBox, load_or_create_key
 from app.db import make_engine, make_sessionmaker
@@ -117,6 +117,7 @@ class Worker:
             await app.initialize()  # validates the token (get_me)
             await app.start()
             await app.updater.start_polling()
+            await register_commands(app.bot)  # never raises
         except Exception:
             await self._shutdown(app)
             raise

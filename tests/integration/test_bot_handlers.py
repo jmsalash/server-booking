@@ -332,7 +332,7 @@ def test_build_application_registers_handlers(bot_ctx):
     for h in handlers:
         if isinstance(h, CommandHandler):
             commands |= set(h.commands)
-    assert commands == {"start", "bind", "status", "free", "notify"}
+    assert commands == {"start", "bind", "status", "free", "notify", "book", "mybookings", "help"}
     assert any(isinstance(h, CallbackQueryHandler) for h in handlers)
     assert any(isinstance(h, MessageHandler) for h in handlers)
     assert app.error_handlers
