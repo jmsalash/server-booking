@@ -19,6 +19,23 @@ def _person(b: BookingView, tz: str, now: datetime | None) -> str:
     return f"• {b.user_name} — {_resource(b)} — until {until}"
 
 
+def duration_text(minutes: int) -> str:
+    """`45 min`, `2 h`, `2 h 15 min`."""
+    h, m = divmod(minutes, 60)
+    if not h:
+        return f"{m} min"
+    return f"{h} h" if not m else f"{h} h {m} min"
+
+
+def _quiet(card: ServerCard, tz: str, now: datetime | None) -> list[str]:
+    """A hint that a machine in use looks unused, so people can ask the booker."""
+    if now is None or card.quiet_since is None or not card.current:
+        return []
+    minutes = int((now - card.quiet_since).total_seconds() // 60)
+    since = format_hm_or_day(card.quiet_since, tz, now)
+    return [f"💤 Quiet for {duration_text(minutes)} (no activity since {since})"]
+
+
 def _line(card: ServerCard, tz: str) -> str:
     st = card.status
     parts = [f"{STATUS_EMOJI[st.code]} {card.server.name} — {st.label}"]
@@ -32,7 +49,8 @@ def _line(card: ServerCard, tz: str) -> str:
 
 def _block(card: ServerCard, tz: str, now: datetime | None) -> list[str]:
     """The server's status line, then one line per person using it now."""
-    lines = [_line(card, tz), *(_person(b, tz, now) for b in card.current)]
+    lines = [_line(card, tz), *(_person(b, tz, now) for b in card.current),
+             *_quiet(card, tz, now)]
     if card.status.code == StatusCode.SHAREABLE:
         lines.append(CAN_JOIN)
     return lines
@@ -74,7 +92,7 @@ def _usage_line(card: ServerCard) -> str:
 
 def server_detail(card: ServerCard, tz: str, portal_url: str, now: datetime) -> str:
     current = card.current
-    lines = [_line(card, tz), *(_person(b, tz, now) for b in current)]
+    lines = [_line(card, tz), *(_person(b, tz, now) for b in current), *_quiet(card, tz, now)]
     if card.status.code == StatusCode.SHAREABLE:
         lines.append(CAN_JOIN)
     lines.append(_usage_line(card))

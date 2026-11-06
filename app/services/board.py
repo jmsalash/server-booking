@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain import share
+from app.domain.idle import quiet_since
 from app.domain.rules import Rules
 from app.domain.status import compute_status
 from app.domain.types import BookingView, ServerInfo, ServerStatus, ServerUsage
@@ -14,7 +15,8 @@ from app.services import usage
 from app.services.inventory import get_live, list_servers, to_info
 from app.settings_store import SettingsStore
 
-HEALTH_KEY = "health.last_poll"  # last worker poll, written by app.jobs.metrics
+HEALTH_KEY = "health.last_poll"
+QUIET_LOOKBACK = timedelta(hours=12)  # bounds the snapshot query for quiet_since  # last worker poll, written by app.jobs.metrics
 
 UPCOMING_WINDOW = timedelta(days=14)
 
@@ -33,6 +35,8 @@ class ServerCard:
     current: tuple[BookingView, ...] = ()
     # Start of the first booking that starts after now.
     next_start: datetime | None = None
+    # In use but quiet for at least the idle window: since when (bot /status only).
+    quiet_since: datetime | None = None
 
 
 def to_view(b: Booking, user_name: str) -> BookingView:
@@ -82,7 +86,14 @@ async def _card(
     current = tuple(sorted((b for b in bookings if b.start <= now < b.end),
                            key=lambda b: (b.is_shared, b.start, b.id)))
     next_start = next((b.start for b in bookings if b.start > now), None)
-    return ServerCard(info, status, latest, stale, upcoming, pending, current, next_start)
+    quiet = None
+    if current and server.kind == "grafana" and not stale:
+        snaps = await usage.recent(db, server.id, now - QUIET_LOOKBACK)
+        since = quiet_since(snaps, now, rules, info.has_gpu)
+        if since is not None and now - since >= timedelta(minutes=rules.idle_window_min):
+            quiet = since
+    return ServerCard(info, status, latest, stale, upcoming, pending, current, next_start,
+                      quiet)
 
 
 async def build_card(

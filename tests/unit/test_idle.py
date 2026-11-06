@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.domain.idle import (
-    IdleAction, IdleState, evaluate_idle, evaluate_machine_idle, machine_resource,
+    IdleAction, IdleState, evaluate_idle, evaluate_machine_idle, machine_resource, quiet_since,
 )
 from app.domain.rules import Rules
 from app.domain.timeutil import parse_local
@@ -197,3 +197,53 @@ def test_shared_ram_change_against_one_baseline_resets_both():
 def test_machine_resource():
     assert machine_resource(["cpu", "cpu"]) == "cpu"
     assert machine_resource(["cpu", "cpu_gpu"]) == "cpu_gpu"
+
+
+QT = L("2026-11-10T14:00")
+
+
+def series(n, cpu=2.0, ram=30.0, gpu=1.0, step=5, end=QT, gpus=True):
+    """n snapshots `step` minutes apart, the last one at `end`."""
+    return [ServerUsage(end - timedelta(minutes=step * i), cpu, ram,
+                        (GpuUsage(gpu, 5.0),) if gpus else ())
+            for i in range(n)]
+
+
+def test_quiet_since_all_quiet():
+    snaps = series(30)  # 145 min of quiet
+    assert quiet_since(snaps, QT, RULES, has_gpu=True) == QT - timedelta(minutes=145)
+
+
+def test_quiet_since_stops_at_activity():
+    snaps = series(30)
+    snaps[10] = ServerUsage(snaps[10].ts, 80.0, 30.0, (GpuUsage(1.0, 5.0),))
+    assert quiet_since(snaps, QT, RULES, has_gpu=True) == QT - timedelta(minutes=45)
+
+
+def test_quiet_since_ram_moved_is_activity():
+    snaps = series(10) + series(10, ram=40.0, end=QT - timedelta(minutes=50))
+    assert quiet_since(snaps, QT, RULES, has_gpu=False) == QT - timedelta(minutes=45)
+
+
+def test_quiet_since_stops_at_gap():
+    snaps = series(5) + series(10, end=QT - timedelta(minutes=40))
+    assert quiet_since(snaps, QT, RULES, has_gpu=True) == QT - timedelta(minutes=20)
+
+
+def test_quiet_since_stale_or_missing():
+    assert quiet_since([], QT, RULES, has_gpu=False) is None
+    old = series(10, end=QT - timedelta(minutes=20))
+    assert quiet_since(old, QT, RULES, has_gpu=False) is None
+
+
+def test_quiet_since_gpu_active():
+    busy = series(10, gpu=90.0)
+    assert quiet_since(busy, QT, RULES, has_gpu=True) is None
+    assert quiet_since(busy, QT, RULES, has_gpu=False) == QT - timedelta(minutes=45)
+    assert quiet_since(series(3, gpus=False), QT, RULES, has_gpu=True) is None
+
+
+def test_quiet_since_latest_active():
+    snaps = series(10)
+    snaps[0] = ServerUsage(QT, 50.0, 30.0, (GpuUsage(1.0, 5.0),))
+    assert quiet_since(snaps, QT, RULES, has_gpu=True) is None

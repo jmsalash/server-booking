@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from app.domain.rules import Rules
@@ -102,3 +102,40 @@ def evaluate_idle(
     rules: Rules,
 ) -> IdleDecision:
     return evaluate_machine_idle([state], latest, now, resource, rules)[0]
+
+
+QUIET_MAX_GAP = timedelta(minutes=10)  # about twice the metrics poll interval
+
+
+def _snapshot_quiet(s: ServerUsage, baseline_ram: float, has_gpu: bool, rules: Rules) -> bool:
+    """`_is_quiet`'s thresholds, for one snapshot of the whole machine."""
+    if not s.cpu_pct < rules.idle_cpu_pct:
+        return False
+    if has_gpu and (not s.gpus or not all(g.util_pct < rules.idle_gpu_util_pct for g in s.gpus)):
+        return False
+    return abs(s.ram_pct - baseline_ram) < rules.idle_ram_delta_pp
+
+
+def quiet_since(
+    snapshots: Sequence[ServerUsage], now: datetime, rules: Rules, has_gpu: bool
+) -> datetime | None:
+    """Start of the machine's current quiet stretch, from its metric snapshots.
+
+    Walks back from the latest snapshot while snapshots stay quiet (CPU low, every GPU idle
+    when the server has GPUs, RAM within the idle delta of the latest reading) and no more
+    than QUIET_MAX_GAP apart. None when the latest snapshot is missing, stale or active.
+    Informational (bot /status); unlike the idle tracking it ignores working hours.
+    """
+    ordered = sorted(snapshots, key=lambda s: s.ts, reverse=True)
+    if not ordered or is_stale(ordered[0].ts, now, rules):
+        return None
+    baseline = ordered[0].ram_pct
+    since = None
+    prev_ts = None
+    for s in ordered:
+        if prev_ts is not None and prev_ts - s.ts > QUIET_MAX_GAP:
+            break
+        if not _snapshot_quiet(s, baseline, has_gpu, rules):
+            break
+        since = prev_ts = s.ts
+    return since

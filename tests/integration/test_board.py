@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -159,3 +160,20 @@ async def test_archived_servers_hidden_from_board(db, store, make_server):
     with pytest.raises(LookupError):
         await board.build_card(db, store, gone.id, NOW)
     assert (await board.build_card(db, store, live.id, NOW)).server.name == "live"
+
+
+async def test_card_quiet_since_only_when_in_use_and_quiet_long_enough(db, store, make_server,
+                                                                       make_user):
+    user = await make_user()
+    busy = await make_server(kind="grafana")
+    free = await make_server(kind="grafana")
+    await _add(db, user, busy, at(9), at(18))
+    for server in (busy, free):
+        for m in range(0, 150, 5):  # 145 min of quiet
+            await usage.save_snapshot(db, server.id, ServerUsage(NOW - timedelta(minutes=m),
+                                                                 1.0, 30.0, ()))
+    card = await board.build_card(db, store, busy.id, NOW)
+    assert card.quiet_since == NOW - timedelta(minutes=145)
+    assert (await board.build_card(db, store, free.id, NOW)).quiet_since is None
+    await store.set_rules(replace(await store.get_rules(), idle_window_min=180))
+    assert (await board.build_card(db, store, busy.id, NOW)).quiet_since is None

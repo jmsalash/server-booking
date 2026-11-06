@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
-from app.bot.format import free_list, idle_warning, server_detail, status_list
+from app.bot.format import (
+    duration_text, free_list, idle_warning, server_detail, status_list,
+)
 from app.domain.status import LEGEND_TEXT
 from app.domain.types import (
     BookingView, GpuUsage, ServerInfo, ServerStatus, ServerUsage, StatusCode,
@@ -18,11 +20,12 @@ def bv(user, start, hours, bid=1, resource="cpu", shared=False, shareable=False)
 
 
 def card(code, name="gpu-01", label=None, holders=(), next_busy=None, kind="grafana",
-         usage=None, stale=False, upcoming=(), pending=False):
+         usage=None, stale=False, upcoming=(), pending=False, quiet_since=None):
     info = ServerInfo(1, name, kind, True, 2, code != StatusCode.UNAVAILABLE)
     status = ServerStatus(code, label or code.value, None, next_busy, tuple(holders))
     current = tuple(b for b in upcoming if b.start <= NOW < b.end)
-    return ServerCard(info, status, usage, stale, list(upcoming), pending, current)
+    return ServerCard(info, status, usage, stale, list(upcoming), pending, current, None,
+                      quiet_since)
 
 
 def test_status_list_has_emoji_legend_and_link():
@@ -139,3 +142,22 @@ def test_shareable_server_adds_join_line():
                                      "🟣 One more person can join"]
     detail = server_detail(card(StatusCode.SHAREABLE, upcoming=up), TZ, URL, NOW)
     assert "🟣 One more person can join" in detail
+
+
+def test_quiet_line_for_machine_in_use():
+    up = [bv("Ana", NOW - timedelta(hours=3), 6, 1)]
+    since = NOW - timedelta(hours=2, minutes=15)  # 09:45 Rome
+    c = card(StatusCode.BOOKED, label="Booked until Thu 05 15:00", upcoming=up,
+             quiet_since=since)
+    lines = status_list([c], TZ, URL, NOW).split("\n")
+    assert lines[:3] == ["🔴 gpu-01 — Booked until Thu 05 15:00",
+                         "• Ana — CPU — until 15:00",
+                         "💤 Quiet for 2 h 15 min (no activity since 09:45)"]
+    assert "💤 Quiet for 2 h 15 min" in server_detail(c, TZ, URL, NOW)
+    assert "💤" not in status_list([card(StatusCode.BOOKED, upcoming=up)], TZ, URL, NOW)
+
+
+def test_duration_text():
+    assert duration_text(45) == "45 min"
+    assert duration_text(120) == "2 h"
+    assert duration_text(135) == "2 h 15 min"
