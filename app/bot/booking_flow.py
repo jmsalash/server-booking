@@ -364,7 +364,7 @@ async def mine_step(
             if b.status == "cancelled":
                 notice = f"✅ {name} booking cancelled."
             else:
-                notice = f"✅ {name} ends at {_hm(b.end_at, rules, now)}."
+                notice = f"✅ {name} booking ended. The machine is free now."
     except booking.BookingRejected as e:
         notice = f"Couldn't extend {name}: {error_text(e.error, rules, e.host, now)}"
     except PermissionError:

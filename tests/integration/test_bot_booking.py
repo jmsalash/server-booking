@@ -419,9 +419,10 @@ async def test_mybookings_extend_end_cancel(bot_ctx, db, store, make_user, make_
     assert (await db.get(Booking, rid)).end_at == HOUR + h(5)
 
     r = await _press(bot_ctx, f"mb:e:{rid}")
-    assert r.text.startswith("✅ gpu-05 ends at 12:00.")  # the next full hour
+    assert r.text.startswith("✅ gpu-05 booking ended. The machine is free now.")
+    assert "gpu-05" not in r.text.split("\n\n", 1)[1]
     db.expire_all()
-    assert (await db.get(Booking, rid)).end_at == HOUR + h(1)
+    assert (await db.get(Booking, rid)).status == "completed"
 
     r = await _press(bot_ctx, f"mb:c:{lid}")
     assert r.text == "Cancel cpu-03 Fri 06 10:00–14:00?"

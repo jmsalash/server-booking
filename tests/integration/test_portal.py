@@ -410,14 +410,14 @@ async def test_cancel_missing_booking_404(client, logged_in):
     assert r.status_code == 404
 
 
-async def test_end_now_rounds_up(client, logged_in, db, make_server):
+async def test_end_now_ends_right_away(client, logged_in, db, make_server):
     s = await make_server(name="srv")
     b = await _add(db, logged_in, s, NOW - timedelta(minutes=20), NOW + timedelta(hours=3, minutes=40))
     await db.commit()
     r = await client.post(f"/bookings/{b.id}/end")
     assert r.status_code == 303
     [row] = await _bookings(db, s.id)
-    assert row.end_at == datetime(2026, 11, 9, 11, tzinfo=UTC)
+    assert (row.end_at, row.status) == (NOW, "completed")
 
 
 async def test_extend_own_booking(client, logged_in, db, make_server):

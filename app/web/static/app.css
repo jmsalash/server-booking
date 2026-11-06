@@ -568,3 +568,17 @@ a.cal-bar--mine:hover { background: #cbdafc; color: #1e3a8a; }
   .cal__grid { min-width: 940px; }
   .cal__name { padding: 0 var(--s2); }
 }
+
+/* Busy state while a form is being sent (app.js). */
+.is-blocked { pointer-events: none; opacity: .6; }
+.is-busy { position: relative; opacity: 1; cursor: progress; color: transparent !important; }
+.is-busy::after {
+  content: ""; position: absolute; inset: 0; margin: auto;
+  width: 1em; height: 1em; border-radius: 50%;
+  border: 2px solid; border-color: var(--muted) transparent var(--muted) transparent;
+  animation: btn-spin .7s linear infinite;
+}
+.btn--primary.is-busy::after { border-color: #fff transparent #fff transparent; }
+.btn--danger.is-busy::after { border-color: var(--danger) transparent var(--danger) transparent; }
+@keyframes btn-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .is-busy::after { animation-duration: 2s; } }

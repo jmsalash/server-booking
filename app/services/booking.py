@@ -99,17 +99,20 @@ async def _flush_or_conflict(db: AsyncSession, add: Booking | None = None) -> No
         raise
 
 
-def _ceil_hour(now: datetime, tz: str) -> datetime:
-    floor = floor_hour(now, tz)
-    return floor if floor == now else floor + timedelta(hours=1)
+async def _ended_overlap(
+    db: AsyncSession, server_id: int, start: datetime, now: datetime, tz: str
+) -> bool:
+    """Is there a booking that already ended (completed) inside the back-dated hours?
 
-
-async def _ended_overlap(db: AsyncSession, server_id: int, start: datetime, now: datetime) -> bool:
-    """Is there a booking that already ended (completed) inside [start, now)?"""
+    Only whole hours before the current one count: booking from the start of this hour right
+    after someone ended theirs early (at, say, 14:20) is just booking "now"."""
+    hour = floor_hour(now, tz)
+    if start >= hour:
+        return False
     hit = await db.scalar(
         select(Booking.id).where(
             Booking.server_id == server_id, Booking.status == "completed",
-            Booking.start_at < now, Booking.end_at > start,
+            Booking.start_at < hour, Booking.end_at > start,
         ).limit(1)
     )
     return hit is not None
@@ -142,7 +145,7 @@ async def create_booking(
     )
     if not v.ok:
         raise BookingRejected(v.error, v.host)
-    if start < now and await _ended_overlap(db, server_id, start, now):
+    if start < now and await _ended_overlap(db, server_id, start, now, rules.timezone):
         # Back-dating may only claim past time nobody else had booked.
         raise BookingRejected(BookingError.CONFLICT)
     if v.is_shared and not confirm_shared:
@@ -172,25 +175,24 @@ async def create_booking(
 
 async def _end_early(
     db: AsyncSession, store: SettingsStore, b: Booking, now: datetime, rules: Rules
-) -> dict | None:
-    """Shorten an ongoing booking to the next hour boundary. Returns audit details or None."""
-    new_end = _ceil_hour(now, rules.timezone)
+) -> dict:
+    """End an ongoing booking right now (one not started yet is cancelled). Returns audit details.
+
+    The booking is completed at once, so the machine is free straight away: the overlap
+    constraint only covers active bookings, and anyone may book it from this hour on."""
     old_end = b.end_at
-    if new_end >= old_end:
-        return None
-    if new_end <= b.start_at:
+    if now <= b.start_at:
         b.status = "cancelled"
         b.cancelled_at = now
         await db.flush()
         await calendar_sync.queue_delete(db, store, b.id, now)
     else:
-        b.end_at = new_end
-        # The new end is at most an hour away: an "ends soon / Extend" reminder right after
-        # the user chose to end early would be noise.
-        b.end_reminder_sent = True
+        b.end_at = now
+        b.status = "completed"
+        b.end_reminder_sent = True  # nothing left to remind about
         await db.flush()
         await calendar_sync.queue_update(db, store, b.id, now)
-    return {"old_end": old_end.isoformat(), "new_end": new_end.isoformat(), "status": b.status}
+    return {"old_end": old_end.isoformat(), "new_end": now.isoformat(), "status": b.status}
 
 
 async def cancel_booking(
@@ -202,7 +204,7 @@ async def cancel_booking(
     reason: str | None = None,
     immediate: bool = False,
 ) -> None:
-    """Cancel a future booking; an ongoing one ends early at the next hour boundary.
+    """Cancel a future booking; an ongoing one ends right now.
 
     With `immediate` (the server is being deleted) an ongoing booking is cancelled outright too.
     """
@@ -221,8 +223,6 @@ async def cancel_booking(
         details = {"mode": "cancel"}
     else:
         ended = await _end_early(db, store, b, now, rules)
-        if ended is None:
-            return
         b.cancel_reason = reason
         await db.flush()
         details = {"mode": "end_early", **ended}
@@ -251,8 +251,6 @@ async def end_early(
         return
     rules = await store.get_rules()
     details = await _end_early(db, store, b, now, rules)
-    if details is None:
-        return
     await audit.record(
         db, "booking.end_early", _target(b), now=now,
         actor_user_id=actor.id if actor else None, details=details,

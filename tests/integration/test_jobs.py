@@ -434,7 +434,7 @@ async def test_end_early_suppresses_end_reminder(db, store, make_user, make_serv
     server = await make_server(name="cpu-07")
     b = await _book(db, user, server, L("2026-11-10T09:00"), L("2026-11-10T18:00"), "cpu")
     await booking_svc.end_early(db, store, b.id, user, L("2026-11-10T10:20"))
-    assert b.end_at == L("2026-11-10T11:00") and b.end_reminder_sent is True
+    assert b.end_at == L("2026-11-10T10:20") and b.status == "completed"
     await booking_lifecycle(db, store, L("2026-11-10T10:21"))
     assert await _texts(db, user.telegram_id) == []
 

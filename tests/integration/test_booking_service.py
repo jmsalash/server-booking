@@ -201,20 +201,20 @@ async def test_exclusion_constraint_maps_to_conflict(db, store, make_user, make_
     assert len((await db.scalars(select(Booking))).all()) == 1
 
 
-async def test_end_early_rounds_up_to_next_hour(db, store, make_user, make_server):
+async def test_end_early_ends_right_now(db, store, make_user, make_server):
     await _configure(store)
     user = await make_user()
     server = await make_server()
     b = await _add(db, user, server, at(11), at(17))
     await end_early(db, store, b.id, user, NOW)  # 12:20 UTC
-    assert b.end_at == at(13) and b.status == "active"
+    assert b.end_at == NOW and b.status == "completed"
     [upd] = await _items(db, "calendar_update")
     assert upd.payload == {"booking_id": b.id}
     [a] = await _audit(db)
     assert (a.action, a.actor_user_id) == ("booking.end_early", user.id)
 
 
-async def test_end_early_at_start_hour_cancels(db, store, make_user, make_server):
+async def test_end_early_at_start_cancels(db, store, make_user, make_server):
     await _configure(store)
     user = await make_user()
     server = await make_server()
@@ -223,6 +223,23 @@ async def test_end_early_at_start_hour_cancels(db, store, make_user, make_server
     assert b.status == "cancelled" and b.end_at == at(17)
     assert len(await _items(db, "calendar_delete")) == 1
     assert await _items(db, "calendar_update") == []
+
+
+async def test_machine_can_be_booked_from_this_hour_after_ending(
+    db, store, make_user, make_server
+):
+    """Ending at 12:20 frees the machine: someone else books it "now" (from 12:00) at once,
+    but can't back-date over the time the ended booking actually used."""
+    await _configure(store)
+    ana, bob = await make_user(), await make_user()
+    server = await make_server()
+    a = await _add(db, ana, server, at(10), at(17))
+    await end_early(db, store, a.id, ana, NOW)
+    with pytest.raises(BookingRejected) as e:
+        await create_booking(db, store, bob, server.id, at(11), at(14), "cpu", NOW)
+    assert e.value.error == BookingError.CONFLICT
+    b = await create_booking(db, store, bob, server.id, at(12), at(14), "cpu", NOW)
+    assert b.status == "active"
 
 
 async def test_end_early_on_ended_booking_is_noop(db, store, make_user, make_server):
@@ -286,7 +303,7 @@ async def test_cancel_ongoing_ends_early(db, store, make_user, make_server):
     server = await make_server()
     b = await _add(db, user, server, at(11), at(17))
     await cancel_booking(db, store, b.id, user, NOW)
-    assert b.status == "active" and b.end_at == at(13)
+    assert b.status == "completed" and b.end_at == NOW
     assert len(await _items(db, "calendar_update")) == 1
     assert await _items(db, "calendar_delete") == []
 
@@ -374,8 +391,8 @@ async def test_partner_keeps_time_when_main_booking_ends(db, store, make_user, m
     server = await make_server()
     a = await _add(db, ana, server, at(11), at(18), shareable=True)
     b = await _add(db, bob, server, at(12), at(17), is_shared=True)
-    await cancel_booking(db, store, a.id, ana, NOW)  # ongoing: ends at the next hour
-    assert a.end_at == at(13) and b.end_at == at(17) and b.status == "active"
+    await cancel_booking(db, store, a.id, ana, NOW)  # ongoing: ends right now
+    assert a.end_at == NOW and b.end_at == at(17) and b.status == "active"
     with pytest.raises(BookingRejected) as e:  # can't stretch borrowed time further
         await extend(db, store, b.id, bob, at(18), NOW)
     assert e.value.error == BookingError.OUTSIDE_HOST

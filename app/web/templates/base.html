@@ -6,6 +6,7 @@
   <title>{% block title %}Lab Servers{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js"></script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body>
   {% set path = request.url.path if request else "" %}

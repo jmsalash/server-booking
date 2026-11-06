@@ -16,7 +16,7 @@ import telegram
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
-from telegram.error import BadRequest, TelegramError
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -464,18 +464,30 @@ def build_application(token: str, ctx: BotContext) -> Application:
         if reply is not None:
             await _reply(update, context, reply)
 
+    async def _try_edit(query, text: str, markup) -> None:
+        try:
+            await query.edit_message_text(text, reply_markup=markup)
+        except TelegramError:
+            log.warning("could not edit callback message", exc_info=True)
+
     async def callback(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
+        original = getattr(query.message, "text", None)
+        if original:
+            # Buttons can't be disabled: take them away while working, so a second tap can't
+            # send the same action twice, and say that something is happening.
+            await _try_edit(query, f"{original}\n\n⏳ Working…", None)
         try:
             reply = await on_callback(
                 ctx, _tg_user(query.from_user), query.data or "", clock.utcnow()
             )
+        except Exception:
+            if original:  # put the buttons back so the user can try again
+                await _try_edit(query, original, query.message.reply_markup)
+            raise
         finally:
             await query.answer()  # never leave the client spinner hanging
-        try:
-            await query.edit_message_text(reply.text, reply_markup=_markup(reply.buttons))
-        except BadRequest:
-            log.warning("could not edit callback message", exc_info=True)
+        await _try_edit(query, reply.text, _markup(reply.buttons))
 
     async def group_message(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = update.effective_message
