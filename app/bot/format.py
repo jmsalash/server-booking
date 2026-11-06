@@ -8,7 +8,7 @@ from app.services.board import ServerCard
 
 FREE_CODES = (StatusCode.AVAILABLE, StatusCode.BOOKED_SOON, StatusCode.SHAREABLE)
 DETAIL_NEXT = 3
-CAN_JOIN = "🟣 One more person can join"
+CAN_JOIN = "One more person can join"  # the line above already has the status dot
 
 
 def _resource(b: BookingView) -> str:
@@ -53,10 +53,18 @@ def _footer(portal_url: str) -> list[str]:
     return [f"Book: {portal_url}"] if portal_url else []
 
 
+# Most useful first: free machines, then ones you could join or that free up soon, then busy.
+_LIST_ORDER = {
+    StatusCode.AVAILABLE: 0, StatusCode.BOOKED_SOON: 1, StatusCode.SHAREABLE: 2,
+    StatusCode.FREE_SOON: 3, StatusCode.BOOKED: 4, StatusCode.UNAVAILABLE: 5,
+}
+
+
 def status_list(
     cards: Sequence[ServerCard], tz: str, portal_url: str, now: datetime | None = None
 ) -> str:
-    lines = [line for c in cards for line in _block(c, tz, now)]
+    ordered = sorted(cards, key=lambda c: (_LIST_ORDER.get(c.status.code, 99), c.server.name))
+    lines = [line for c in ordered for line in _block(c, tz, now)]
     return "\n".join([*lines, "", LEGEND_TEXT, *_footer(portal_url)])
 
 

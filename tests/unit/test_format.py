@@ -38,8 +38,8 @@ def test_status_list_has_emoji_legend_and_link():
         TZ, URL,
     )
     lines = text.split("\n")
-    assert lines[0] == "🔴 gpu-01 — Booked until Thu 05 18:00 · Ana, Bo · next: Fri 06 12:00"
-    assert lines[1] == "🟢 cpu-02 — Available"
+    assert lines[0] == "🟢 cpu-02 — Available"  # free machines first
+    assert lines[1] == "🔴 gpu-01 — Booked until Thu 05 18:00 · Ana, Bo · next: Fri 06 12:00"
     assert lines[2] == ""
     assert lines[3] == LEGEND_TEXT
     assert lines[4] == f"Book: {URL}"
@@ -139,9 +139,9 @@ def test_shareable_server_adds_join_line():
                            upcoming=up)], TZ, URL, NOW)
     assert text.split("\n")[:3] == ["🟣 gpu-01 — In use — can share",
                                      "• Ana — CPU — until Fri 06 17:00",
-                                     "🟣 One more person can join"]
+                                     "One more person can join"]
     detail = server_detail(card(StatusCode.SHAREABLE, upcoming=up), TZ, URL, NOW)
-    assert "🟣 One more person can join" in detail
+    assert "One more person can join" in detail
 
 
 def test_quiet_line_for_machine_in_use():
@@ -176,3 +176,11 @@ def test_full_texts():
         "⚠️ gpu-05: disk /data is 96% full. Free some space before it runs out.")
     assert disk_full("gpu-05", [DiskUsage("/data", 96.0), DiskUsage("/", 91.0)]) == (
         "⚠️ gpu-05: disks are almost full: /data 96%, / 91%. Free some space before they run out.")
+
+
+def test_status_list_puts_available_first():
+    cards = [card(StatusCode.BOOKED, name="a-busy"), card(StatusCode.UNAVAILABLE, name="b-off"),
+             card(StatusCode.AVAILABLE, name="z-free"), card(StatusCode.FREE_SOON, name="c-soon")]
+    text = status_list(cards, TZ, URL, NOW)
+    order = [n for n in ("z-free", "c-soon", "a-busy", "b-off")]
+    assert [text.index(n) for n in order] == sorted(text.index(n) for n in order)
