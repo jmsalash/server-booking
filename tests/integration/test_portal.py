@@ -381,6 +381,14 @@ async def test_board_offers_own_booking_actions_not_watch(client, logged_in, db,
     assert f'action="/bookings/{later_b.id}/cancel"' in r.text and "Cancel mine" in r.text
     assert f'action="/watch/{others.id}"' in r.text
     assert f"/bookings/{bob_b.id}/" not in r.text
+    # Ending or cancelling asks first, in the page's own modal (not the browser's confirm()).
+    assert 'data-confirm="End your booking on mine-now?"' in r.text
+    assert 'data-confirm="Cancel your booking on mine-later?"' in r.text
+    assert "onsubmit" not in r.text
+    r = await client.get("/me")
+    assert 'data-confirm="End your booking on mine-now?"' in r.text
+    assert 'data-confirm="Cancel your booking on mine-later?"' in r.text
+    assert 'data-confirm-ok="End booking"' in r.text
 
 
 async def test_board_actions_return_to_board(client, logged_in, db, make_server):

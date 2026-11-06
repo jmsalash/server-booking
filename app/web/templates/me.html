@@ -52,9 +52,9 @@
         </form>
         {% endif %}
         {% if b.start > now %}
-        <form method="post" action="/bookings/{{ b.id }}/cancel" class="inline"><button type="submit" class="btn btn--danger">Cancel</button></form>
+        <form method="post" action="/bookings/{{ b.id }}/cancel" class="inline" data-confirm="Cancel your booking on {{ names.get(b.server_id, '?') }}?" data-confirm-text="{{ b.start|day_hm(tz) }} – {{ b.end|day_hm(tz) }}" data-confirm-ok="Cancel booking"><button type="submit" class="btn btn--danger">Cancel</button></form>
         {% else %}
-        <form method="post" action="/bookings/{{ b.id }}/end" class="inline"><button type="submit" class="btn btn--danger">End now</button></form>
+        <form method="post" action="/bookings/{{ b.id }}/end" class="inline" data-confirm="End your booking on {{ names.get(b.server_id, '?') }}?" data-confirm-text="It ends now and the machine is free for others right away." data-confirm-ok="End booking"><button type="submit" class="btn btn--danger">End now</button></form>
         {% endif %}
       </div>
     </div>

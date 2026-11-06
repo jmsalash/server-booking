@@ -582,3 +582,15 @@ a.cal-bar--mine:hover { background: #cbdafc; color: #1e3a8a; }
 .btn--danger.is-busy::after { border-color: var(--danger) transparent var(--danger) transparent; }
 @keyframes btn-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .is-busy::after { animation-duration: 2s; } }
+
+/* Confirmation modal (app.js, forms with data-confirm). */
+.modal {
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 0;
+  width: min(26rem, calc(100vw - 2rem)); background: var(--surface); color: var(--fg);
+  box-shadow: 0 12px 32px rgba(16, 24, 40, .18);
+}
+.modal::backdrop { background: rgba(16, 24, 40, .35); }
+.modal__body { padding: 1.25rem 1.25rem 1rem; }
+.modal__title { font-size: var(--fs-lg); font-weight: 600; margin: 0 0 .4rem; }
+.modal__text { color: var(--muted); font-size: var(--fs-sm); margin: 0 0 1rem; }
+.modal__actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }
