@@ -16,7 +16,7 @@ from app.settings_store import SettingsStore
 async def _active_now(
     db: AsyncSession, now: datetime, lock: bool
 ) -> list[tuple[int, list[Booking]]]:
-    """Active bookings running at `now` on enabled Grafana servers, grouped by server id.
+    """Active bookings running at `now` on enabled, live Grafana servers, grouped by server id.
 
     Lock order (shared with the booking service and booking_lifecycle): server rows first, then
     booking rows by id. With `lock`, the bookings are locked in id order in one statement so a
@@ -27,7 +27,7 @@ async def _active_now(
         .join(Server, Server.id == Booking.server_id)
         .where(
             Booking.status == "active", Booking.start_at <= now, Booking.end_at > now,
-            Server.enabled.is_(True), Server.kind == "grafana",
+            Server.enabled.is_(True), Server.kind == "grafana", Server.archived_at.is_(None),
         )
         .order_by(Booking.id)
         .execution_options(populate_existing=True)

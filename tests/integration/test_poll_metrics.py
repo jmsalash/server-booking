@@ -191,3 +191,14 @@ async def test_poll_uses_new_gpu_defaults_over_stored_legacy_defaults(db, store,
     assert any(e.startswith("DCGM_FI_DEV_GPU_UTIL{instance=~") for e in seen)
     assert all(r"(?i)g\\-host" in e for e in seen)  # PromQL text: g\\-host
     assert len((await usage.latest(db, s.id)).gpus) == 1
+
+
+async def test_poll_skips_archived_servers(db, store, make_server):
+    await configure(store)
+    # enabled left on on purpose: archived_at alone must hide the server
+    s = await make_server(name="gone", kind="grafana", grafana_instance="gone", archived_at=NOW)
+    with respx.mock:
+        route = respx.post(f"{BASE}/api/ds/query").mock(side_effect=side)
+        res = await poll_metrics(db, store, factory, NOW)
+    assert res.ok == 0 and not route.called
+    assert await usage.latest(db, s.id) is None

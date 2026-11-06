@@ -32,7 +32,7 @@ async def _reminders(db: AsyncSession, store: SettingsStore, now: datetime, tz: 
     rows = await db.execute(
         select(Booking, Server.name)
         .join(Server, Server.id == Booking.server_id)
-        .where(Booking.status == "active", Booking.end_at > now)
+        .where(Booking.status == "active", Booking.end_at > now, Server.archived_at.is_(None))
         .order_by(Booking.id)
     )
     for b, server_name in rows.all():

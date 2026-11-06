@@ -499,3 +499,13 @@ async def test_prune_housekeeping(db, store, make_user):
     assert (await db.scalars(select(Session.id))).all() == ["live"]
     left = (await db.scalars(select(OutboxItem.done_at).order_by(OutboxItem.id))).all()
     assert left == [now - timedelta(days=6), None]
+
+
+async def test_idle_job_ignores_archived_servers(db, store, quiet_booking, gpu_server):
+    # enabled left on on purpose: archived_at alone must stop idle tracking and reclaim
+    gpu_server.archived_at = L("2026-11-10T08:00")
+    await db.flush()
+    actions = await _drive_idle(db, store, gpu_server.id, L("2026-11-10T09:00"),
+                                L("2026-11-10T12:00"))
+    assert actions == []
+    assert (await db.get(Booking, quiet_booking.id)).idle_warnings == 0

@@ -13,7 +13,7 @@ from app.domain.timeutil import floor_hour, parse_local
 from app.domain.types import StatusCode
 from app.models import Booking, LoginToken, Server, Session, User
 from app.services import auth, board, booking, watchlist
-from app.services.inventory import list_servers
+from app.services.inventory import get_live, list_servers
 from app.settings_store import K, SettingsStore
 from app.web.deps import (
     COOKIE,
@@ -268,6 +268,8 @@ async def book_submit(
     start = parse_form_dt(values["start"], rules.timezone)
     end = parse_form_dt(values["end"], rules.timezone)
     server = await db.get(Server, server_id) if server_id is not None else None
+    if server is not None and server.archived_at is not None:
+        server = None
     if start is None or end is None or server is None or values["resource"] not in RESOURCES:
         return await _render_book(request, db, store, user, server_id, values, 400, BAD_FORM)
     try:
@@ -393,8 +395,7 @@ async def extend(
 async def watch(
     server_id: int, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
-    if await db.get(Server, check_id(server_id)) is None:
-        raise LookupError(f"server {server_id} not found")
+    await get_live(db, check_id(server_id))
     await watchlist.subscribe(db, user.id, server_id, clock.utcnow())
     await db.commit()
     return _redirect("/")

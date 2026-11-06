@@ -11,7 +11,7 @@ from app.domain.status import compute_status
 from app.domain.types import BookingView, ServerInfo, ServerStatus, ServerUsage
 from app.models import Booking, Server, User
 from app.services import usage
-from app.services.inventory import list_servers, to_info
+from app.services.inventory import get_live, list_servers, to_info
 from app.settings_store import SettingsStore
 
 UPCOMING_WINDOW = timedelta(days=14)
@@ -79,9 +79,7 @@ async def _card(db: AsyncSession, server: Server, now: datetime, rules: Rules) -
 async def build_card(
     db: AsyncSession, store: SettingsStore, server_id: int, now: datetime
 ) -> ServerCard:
-    server = await db.get(Server, server_id)
-    if server is None:
-        raise LookupError(f"server {server_id} not found")
+    server = await get_live(db, server_id)
     return await _card(db, server, now, await store.get_rules())
 
 

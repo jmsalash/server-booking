@@ -98,6 +98,8 @@ async def create_booking(
         raise PermissionError(f"user {user.id} is inactive")
     rules = await store.get_rules()
     server = await _lock_server(db, server_id)
+    if server.archived_at is not None:
+        raise LookupError(f"server {server_id} not found")
     existing = await board.active_bookings(db, server_id, now)
     shareable = await board.shareable_now(db, server, now, rules)
     v = validate_booking(
@@ -157,14 +159,19 @@ async def cancel_booking(
     actor: User | None,
     now: datetime,
     reason: str | None = None,
+    immediate: bool = False,
 ) -> None:
+    """Cancel a future booking; an ongoing one ends early at the next hour boundary.
+
+    With `immediate` (the server is being deleted) an ongoing booking is cancelled outright too.
+    """
     b = await _lock_booking(db, booking_id)
     _check_actor(b, actor)
     if b.status != "active" or b.end_at <= now:
         return
     rules = await store.get_rules()
     span = _span(b, rules)
-    if b.start_at > now:
+    if b.start_at > now or immediate:
         b.status = "cancelled"
         b.cancelled_at = now
         b.cancel_reason = reason

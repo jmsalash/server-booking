@@ -50,7 +50,9 @@ async def poll_metrics(
     ds_uid = await store.get(K.GRAFANA_DS_UID)
     queries = effective_queries(await store.get(K.GRAFANA_QUERIES))
     servers = (await db.scalars(
-        select(Server).where(Server.kind == "grafana", Server.enabled.is_(True)).order_by(Server.id)
+        select(Server)
+        .where(Server.kind == "grafana", Server.enabled.is_(True), Server.archived_at.is_(None))
+        .order_by(Server.id)
     )).all()
     ok = 0
     failed: dict[str, str] = {}

@@ -401,3 +401,16 @@ async def test_delete_messages_swallows_telegram_errors():
     bot = Bot()
     await delete_messages(bot, G, [1, 2])
     assert bot.calls == [1, 2]
+
+
+async def test_archived_server_hidden_from_bot(bot_ctx, db, store, make_server):
+    await make_server(name="gpu-01")
+    await make_server(name="gone-01", archived_at=NOW, enabled=False)
+    await _configure(db, store)
+    _member(bot_ctx)
+    assert "gone-01" not in (await _cmd(bot_ctx, "status")).text
+    assert "gone-01" not in (await _cmd(bot_ctx, "free")).text
+    r = await _cmd(bot_ctx, "status", ["gone-01"])
+    assert r.text == 'Unknown server "gone-01". Try /status.'
+    r = await _cmd(bot_ctx, "notify", ["gone-01"])
+    assert r.text.startswith('Unknown server "gone-01"')

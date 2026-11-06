@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.domain.types import ServerUsage, StatusCode
 from app.models import Booking
 from app.services import board, inventory, usage
@@ -119,3 +121,15 @@ async def test_inventory_crud(db):
     assert g2.kind == "standalone" and g2.shareable is False and g2.enabled is True
     s2 = await inventory.update_server(db, s.id, shareable=True)
     assert s2.shareable is False
+
+
+async def test_archived_servers_hidden_from_board(db, store, make_server):
+    live = await make_server(name="live")
+    gone = await make_server(name="gone", archived_at=NOW, enabled=False)
+    cards = await board.build_board(db, store, NOW)
+    assert [c.server.name for c in cards] == ["live"]
+    assert [s.name for s in await inventory.list_servers(db)] == ["live"]
+    assert [s.name for s in await inventory.list_archived(db)] == ["gone"]
+    with pytest.raises(LookupError):
+        await board.build_card(db, store, gone.id, NOW)
+    assert (await board.build_card(db, store, live.id, NOW)).server.name == "live"
