@@ -40,6 +40,8 @@ def _usage_line(card: ServerCard) -> str:
     if card.server.kind == "standalone":
         return "standalone — not monitored"
     u = card.usage
+    if card.pending:
+        return "usage: waiting for first reading"
     if u is None or card.stale:
         return "usage: unknown"
     parts = [f"CPU {u.cpu_pct:.0f}%", f"RAM {u.ram_pct:.0f}%"]

@@ -13,7 +13,7 @@ from app.models import Server
 from app.services import usage as usage_svc
 from app.settings_store import K, SettingsStore
 
-HEALTH_KEY = "health.last_poll"
+from app.services.board import HEALTH_KEY
 
 
 @dataclass

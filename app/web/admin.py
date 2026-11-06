@@ -23,6 +23,7 @@ from app.integrations.grafana import (
 from app.jobs.metrics import HEALTH_KEY
 from app.models import AuditLog, Booking, OutboxItem, Server, TelegramTopic, User
 from app.services import audit, board, booking, inventory, server_archive
+from app.services import usage as usage_svc
 from app.services.machine_identity import MachineIndex, machine_keys
 from app.settings_store import K, SettingsStore
 from app.web.deps import current_user, get_db, get_store, require_admin, templates
@@ -850,6 +851,7 @@ async def server_fetch(
             text = describe_error(e, (password, token))
         else:
             ok = True
+            await usage_svc.save_snapshot(db, server.id, u)  # board shows it right away
             parts = [f"CPU {u.cpu_pct:.1f}%", f"RAM {u.ram_pct:.1f}%"]
             parts += [f"GPU {i} util {g.util_pct:.1f}% mem {g.mem_pct:.1f}%"
                       for i, g in enumerate(u.gpus)]

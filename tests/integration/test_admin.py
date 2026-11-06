@@ -11,7 +11,7 @@ from app.domain.rules import Rules
 from app.integrations.grafana import Datasource, GrafanaError, Series
 from app.jobs.metrics import HEALTH_KEY
 from app.models import AuditLog, Booking, OutboxItem, Server, Session, TelegramTopic
-from app.services import setup
+from app.services import setup, usage
 from app.settings_store import K, SettingsStore
 from tests.fakes import FakeCalendar, FakeTelegram
 
@@ -230,9 +230,12 @@ async def test_fetch_usage_now(client, logged_in_admin, db, store, make_server, 
     await store.set(K.GRAFANA_URL, "http://grafana.lab")
     await store.set(K.GRAFANA_DS_UID, "prom1")
     await db.commit()
-    r = await client.post(f"/admin/servers/{s.id}/fetch")
+    sid = s.id
+    r = await client.post(f"/admin/servers/{sid}/fetch")
     assert r.status_code == 200 and "12.5" in r.text and "40.0" in r.text
     assert "admin.fetch_usage" in await _actions(db)
+    saved = await usage.latest(db, sid)  # the board shows it without waiting for the worker
+    assert saved is not None and saved.cpu_pct == 12.5
 
 
 async def test_fetch_usage_error_sanitized(client, logged_in_admin, db, store, make_server,

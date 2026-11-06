@@ -14,6 +14,8 @@ from app.services import usage
 from app.services.inventory import get_live, list_servers, to_info
 from app.settings_store import SettingsStore
 
+HEALTH_KEY = "health.last_poll"  # last worker poll, written by app.jobs.metrics
+
 UPCOMING_WINDOW = timedelta(days=14)
 
 
@@ -24,6 +26,9 @@ class ServerCard:
     usage: ServerUsage | None
     stale: bool
     upcoming: list[BookingView]
+    # Monitored but no reading saved yet and not failing either: a newly added
+    # server waiting for the worker's first poll. Not counted as monitoring down.
+    pending: bool = False
 
 
 def to_view(b: Booking, user_name: str) -> BookingView:
@@ -61,7 +66,15 @@ async def shareable_now(db: AsyncSession, server: Server, now: datetime, rules: 
     return await _shareable(db, server, bookings, now, rules)
 
 
-async def _card(db: AsyncSession, server: Server, now: datetime, rules: Rules) -> ServerCard:
+async def _failed_last_poll(store: SettingsStore) -> set[str]:
+    """Names of servers whose metrics failed in the worker's last poll."""
+    last = await store.get(HEALTH_KEY) or {}
+    return set((last.get("failed") or {}).keys())
+
+
+async def _card(
+    db: AsyncSession, server: Server, now: datetime, rules: Rules, failed: set[str]
+) -> ServerCard:
     info = to_info(server)
     bookings = await active_bookings(db, server.id, now)
     shareable = server.enabled and await _shareable(db, server, bookings, now, rules)
@@ -69,26 +82,34 @@ async def _card(db: AsyncSession, server: Server, now: datetime, rules: Rules) -
     if server.kind == "grafana":
         latest = await usage.latest(db, server.id)
         stale = share.is_stale(latest.ts if latest else None, now, rules)
+        pending = latest is None and server.name not in failed
     else:
-        latest, stale = None, False
+        latest, stale, pending = None, False, False
     horizon = now + UPCOMING_WINDOW
     upcoming = [b for b in bookings if b.start < horizon]
-    return ServerCard(info, status, latest, stale, upcoming)
+    return ServerCard(info, status, latest, stale, upcoming, pending)
 
 
 async def build_card(
     db: AsyncSession, store: SettingsStore, server_id: int, now: datetime
 ) -> ServerCard:
     server = await get_live(db, server_id)
-    return await _card(db, server, now, await store.get_rules())
+    return await _card(db, server, now, await store.get_rules(), await _failed_last_poll(store))
 
 
 async def build_board(db: AsyncSession, store: SettingsStore, now: datetime) -> list[ServerCard]:
     rules = await store.get_rules()
-    return [await _card(db, s, now, rules) for s in await list_servers(db, include_disabled=True)]
+    failed = await _failed_last_poll(store)
+    return [await _card(db, s, now, rules, failed)
+            for s in await list_servers(db, include_disabled=True)]
 
 
 def monitoring_down(cards: Sequence[ServerCard]) -> bool:
-    """True when every enabled Grafana-monitored server has stale metrics."""
-    monitored = [c for c in cards if c.server.kind == "grafana" and c.server.enabled]
+    """True when every enabled Grafana-monitored server has stale metrics.
+
+    Servers still waiting for their first reading are left out, so adding
+    servers does not raise the alarm before the worker has polled them.
+    """
+    monitored = [c for c in cards
+                 if c.server.kind == "grafana" and c.server.enabled and not c.pending]
     return bool(monitored) and all(c.stale for c in monitored)

@@ -92,13 +92,32 @@ async def test_build_board_sorted_disabled_unavailable_and_upcoming(db, store, m
 async def test_monitoring_down(db, store, make_server):
     assert board.monitoring_down([]) is False
     g1 = await make_server(name="g1", kind="grafana")
-    await make_server(name="g2", kind="grafana")
+    g2 = await make_server(name="g2", kind="grafana")
     await make_server(name="s1", kind="standalone")
+    await _snapshots(db, g1, NOW - timedelta(hours=2))
+    await _snapshots(db, g2, NOW - timedelta(hours=2))
     cards = await board.build_board(db, store, NOW)
     assert board.monitoring_down(cards) is True
     await _snapshots(db, g1, NOW)
     cards = await board.build_board(db, store, NOW)
     assert board.monitoring_down(cards) is False
+
+
+async def test_new_servers_wait_for_first_reading(db, store, make_server):
+    await make_server(name="g1", kind="grafana")
+    await make_server(name="g2", kind="grafana")
+    cards = await board.build_board(db, store, NOW)
+    assert [c.pending for c in cards] == [True, True]
+    assert board.monitoring_down(cards) is False
+
+
+async def test_never_read_server_failing_in_last_poll_counts_as_down(db, store, make_server):
+    await make_server(name="g1", kind="grafana")
+    await store.set(board.HEALTH_KEY, {"at": NOW.isoformat(), "ok": 0,
+                                       "failed": {"g1": "MetricsUnavailable: no data"}})
+    cards = await board.build_board(db, store, NOW)
+    assert cards[0].pending is False
+    assert board.monitoring_down(cards) is True
 
 
 async def test_monitoring_down_ignores_disabled(db, store, make_server):

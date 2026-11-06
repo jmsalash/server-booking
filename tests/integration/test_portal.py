@@ -125,6 +125,14 @@ async def test_monitoring_banner_when_all_stale(client, logged_in, db, make_serv
     assert "usage: unknown" in r.text
 
 
+async def test_new_server_waits_for_first_reading(client, logged_in, db, make_server):
+    await make_server(name="mon-new", kind="grafana")
+    await db.commit()
+    r = await client.get("/")
+    assert "waiting for first reading" in r.text
+    assert "Monitoring is down" not in r.text
+
+
 async def test_no_monitoring_banner_when_fresh(client, logged_in, db, make_server):
     server = await make_server(name="mon-1", kind="grafana")
     await usage.save_snapshot(db, server.id, ServerUsage(NOW - timedelta(minutes=1), 5.0, 5.0, ()))

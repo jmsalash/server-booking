@@ -18,6 +18,8 @@
     <div class="usage">
       {% if c.server.kind == "standalone" %}
       <p class="usage__none">standalone — not monitored</p>
+      {% elif c.pending %}
+      <p class="usage__none">usage: waiting for first reading</p>
       {% elif c.stale or c.usage is none %}
       <p class="usage__none">usage: unknown</p>
       {% else %}

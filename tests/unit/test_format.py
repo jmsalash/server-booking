@@ -17,10 +17,10 @@ def bv(user, start, hours, bid=1):
 
 
 def card(code, name="gpu-01", label=None, holders=(), next_busy=None, kind="grafana",
-         usage=None, stale=False, upcoming=()):
+         usage=None, stale=False, upcoming=(), pending=False):
     info = ServerInfo(1, name, kind, True, 2, True, code != StatusCode.UNAVAILABLE)
     status = ServerStatus(code, label or code.value, None, next_busy, tuple(holders))
-    return ServerCard(info, status, usage, stale, list(upcoming))
+    return ServerCard(info, status, usage, stale, list(upcoming), pending)
 
 
 def test_status_list_has_emoji_legend_and_link():
@@ -70,6 +70,11 @@ def test_detail_unknown_usage_when_stale():
     text = server_detail(card(StatusCode.AVAILABLE, usage=u, stale=True), TZ, URL, NOW)
     assert "usage: unknown" in text and "CPU" not in text
     assert "usage: unknown" in server_detail(card(StatusCode.AVAILABLE), TZ, URL, NOW)
+
+
+def test_detail_waiting_for_first_reading():
+    text = server_detail(card(StatusCode.AVAILABLE, stale=True, pending=True), TZ, URL, NOW)
+    assert "waiting for first reading" in text
 
 
 def test_detail_usage_line():
