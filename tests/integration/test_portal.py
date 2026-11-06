@@ -113,7 +113,7 @@ async def test_usage_bars_for_fresh_metrics(client, logged_in, db, make_server):
     await db.commit()
     r = await client.get("/board/cards")
     assert "CPU" in r.text and "37%" in r.text and "42%" in r.text
-    assert "GPU · RTX 5090" in r.text and "81%" in r.text and "64%" in r.text
+    assert "RTX 5090" in r.text and "VRAM" in r.text and "81%" in r.text and "64%" in r.text
     assert "usage: unknown" not in r.text
 
 
@@ -307,6 +307,35 @@ async def test_cannot_cancel_others_booking(client, logged_in, db, make_user, ma
     assert r.status_code == 403
     [row] = await _bookings(db, s.id)
     assert row.status == "active"
+
+
+async def test_board_offers_own_booking_actions_not_watch(client, logged_in, db, make_user,
+                                                         make_server):
+    bob = await make_user(display_name="Bob")
+    running = await make_server(name="mine-now")
+    later = await make_server(name="mine-later")
+    others = await make_server(name="bobs")
+    now_b = await _add(db, logged_in, running, NOW - timedelta(hours=1), NOW + timedelta(hours=3))
+    later_b = await _add(db, logged_in, later, NOW + timedelta(days=1), NOW + timedelta(days=1, hours=2))
+    bob_b = await _add(db, bob, others, NOW - timedelta(hours=1), NOW + timedelta(hours=3))
+    await db.commit()
+    r = await client.get("/board/cards")
+    assert f'action="/bookings/{now_b.id}/end"' in r.text and "End booking" in r.text
+    assert f'action="/watch/{running.id}"' not in r.text
+    assert f'action="/bookings/{later_b.id}/cancel"' in r.text and "Cancel booking" in r.text
+    assert f'action="/watch/{others.id}"' in r.text
+    assert f"/bookings/{bob_b.id}/" not in r.text
+
+
+async def test_board_actions_return_to_board(client, logged_in, db, make_server):
+    s = await make_server(name="srv")
+    b = await _add(db, logged_in, s, datetime(2026, 11, 10, 8, tzinfo=UTC),
+                   datetime(2026, 11, 10, 10, tzinfo=UTC))
+    await db.commit()
+    r = await client.post(f"/bookings/{b.id}/cancel", data={"next": "/"})
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    r = await client.post(f"/bookings/{b.id}/cancel", data={"next": "https://evil.example"})
+    assert r.headers["location"] == "/me"
 
 
 async def test_cancel_own_future_booking(client, logged_in, db, make_server):

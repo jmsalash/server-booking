@@ -169,10 +169,19 @@ async def logout(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 async def _board_ctx(db: AsyncSession, store: SettingsStore, user: User) -> dict:
-    cards = await board.build_board(db, store, clock.utcnow())
+    now = clock.utcnow()
+    cards = await board.build_board(db, store, now)
     rules = await store.get_rules()
+    # The viewer's own booking per server (running one first, else the next one), so the
+    # card can offer "End my booking" / "Cancel my booking" instead of "Notify me when free".
+    mine = {}
+    for c in cards:
+        own = [b for b in c.upcoming if b.user_id == user.id]
+        if own:
+            b = own[0]
+            mine[c.server.id] = {"booking": b, "running": b.start <= now}
     return {"user": user, "cards": cards, "tz": rules.timezone, "legend": legend(rules),
-            "monitoring_down": board.monitoring_down(cards)}
+            "monitoring_down": board.monitoring_down(cards), "mine": mine}
 
 
 @router.get("/")
@@ -318,8 +327,14 @@ async def me_page(
     return await _render_me(request, db, store, user)
 
 
+async def _back(request: Request) -> str:
+    """Where to go after a booking action: the board if the form came from there, else /me."""
+    return "/" if (await request.form()).get("next") == "/" else "/me"
+
+
 @router.post("/bookings/{booking_id}/cancel")
 async def cancel(
+    request: Request,
     booking_id: int,
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
@@ -327,11 +342,12 @@ async def cancel(
 ):
     await booking.cancel_booking(db, store, check_id(booking_id), actor=user, now=clock.utcnow())
     await db.commit()
-    return _redirect("/me")
+    return _redirect(await _back(request))
 
 
 @router.post("/bookings/{booking_id}/end")
 async def end_now(
+    request: Request,
     booking_id: int,
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
@@ -339,7 +355,7 @@ async def end_now(
 ):
     await booking.end_early(db, store, check_id(booking_id), actor=user, now=clock.utcnow())
     await db.commit()
-    return _redirect("/me")
+    return _redirect(await _back(request))
 
 
 @router.post("/bookings/{booking_id}/still-using")

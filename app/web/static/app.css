@@ -20,7 +20,7 @@
   --st-available: #3FAE5A;
   --st-booked-soon: #F2A23A;
   --st-booked: #D9483B;
-  --st-shareable: #FFD58A;
+  --st-shareable: #8E6CD8;
   --st-unavailable: #9AA0A6;
 
   /* alerts */
@@ -68,7 +68,8 @@ ul, ol { margin: 0 0 var(--s3); padding-left: 1.25rem; }
 
 /* --- header ------------------------------------------------------------------------------ */
 
-.site-header { background: var(--surface); border-bottom: 1px solid var(--line); }
+html { scroll-padding-top: 5rem; }
+.site-header { background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 50; }
 .site-header__inner {
   max-width: var(--content); margin: 0 auto; padding: var(--s3) var(--s4);
   display: flex; align-items: center; justify-content: space-between; gap: var(--s3) var(--s5); flex-wrap: wrap;
@@ -147,7 +148,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .dot--booked_soon { background: #F2A23A; }
 .dot--booked { background: #D9483B; }
 .dot--free_soon { background: linear-gradient(90deg, #D9483B 50%, #3FAE5A 50%); }
-.dot--shareable { background: #FFD58A; box-shadow: inset 0 0 0 1px #e0b55a; }
+.dot--shareable { background: #8E6CD8; }
 .dot--unavailable { background: #9AA0A6; }
 
 .chip {
@@ -159,7 +160,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .chip--booked_soon { background: #fef5e8; border-color: #f6d7a6; }
 .chip--booked { background: #fcefed; border-color: #f0c2bc; }
 .chip--free_soon { background: #f5f3ee; border-color: #e3d7cf; }
-.chip--shareable { background: #fff8e8; border-color: #f4dda5; }
+.chip--shareable { background: #f4f0fc; border-color: #d9cdf3; }
 .chip--unavailable { background: #f1f2f4; border-color: #dcdfe3; color: var(--muted); }
 
 .legend-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); flex-wrap: wrap; margin-bottom: var(--s4); }
@@ -218,18 +219,20 @@ td .alert { margin: 0; }
 
 /* --- board server cards ------------------------------------------------------------------ */
 
-.server-card { display: flex; flex-direction: column; gap: var(--s3); padding: var(--s4); }
+.server-card { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3) var(--s4); }
 .server-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s2); }
 .server-card__name { margin: 0; font-size: var(--fs-lg); overflow-wrap: anywhere; }
 .server-card__status { font-size: var(--fs-sm); font-weight: 550; margin: 0; }
-.server-card .actions { margin-top: auto; padding-top: var(--s3); border-top: 1px solid var(--line); min-height: calc(var(--s3) + 2.1rem); }
-.meta { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: .15rem var(--s3); font-size: var(--fs-sm); }
-.meta dt { color: var(--muted); }
-.meta dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.server-card .actions { margin-top: auto; padding-top: var(--s2); border-top: 1px solid var(--line); min-height: calc(var(--s2) + 1.9rem); }
 
 .usage { display: grid; gap: .4rem; font-size: var(--fs-sm); }
 .usage p { margin: 0; }
-.usage .usage__gpu { margin-top: .3rem; font-weight: 600; font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.usage--grid { grid-template-columns: 1fr 1fr; column-gap: var(--s4); row-gap: .35rem; }
+.usage--grid .usage__none { grid-column: 1 / -1; }
+.usage--grid .bar { grid-template-columns: 2.9em 1fr 2.6em; gap: var(--s1); }
+.server-card__title { min-width: 0; }
+.server-card__sub { margin: 0; font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.server-card__who { margin: 0; font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .usage__none { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--muted); }
 .bar { display: grid; grid-template-columns: 5.6em 1fr 3em; gap: var(--s2); align-items: center; }
 .bar__name { color: var(--muted); font-size: var(--fs-xs); font-weight: 550; white-space: nowrap; }

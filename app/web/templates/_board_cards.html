@@ -5,17 +5,20 @@
   {% for c in cards %}
   <article class="card server-card">
     <header class="server-card__head">
-      <h2 class="server-card__name">{{ c.server.name }}</h2>
+      <div class="server-card__title">
+        <h2 class="server-card__name">{{ c.server.name }}</h2>
+        {% set models = (c.usage.gpus if c.usage and not c.stale else [])|map(attribute="short_model")|reject("none")|unique|list %}
+        <p class="server-card__sub">{% if models %}{{ (c.usage.gpus|length ~ "× ") if c.usage.gpus|length > 1 }}{{ models|join(", ") }}{% elif c.server.has_gpu %}{{ c.server.gpu_count }} GPU{{ "s" if c.server.gpu_count != 1 }}{% else %}CPU only{% endif %}</p>
+      </div>
       <span class="chip chip--{{ c.status.code.value }}"><span class="dot dot--{{ c.status.code.value }}" aria-hidden="true"></span>{{ c.status.label }}</span>
     </header>
-    {# Same three rows on every card so booking a machine never changes the card's size. #}
+    {# One fixed line about bookings, so booking a machine never changes the card's size. #}
     {% set holders = c.status.holders|join(", ") %}
-    <dl class="meta">
-      <dt>In use by</dt><dd{% if holders %} title="{{ holders }}"{% endif %}>{{ holders or "—" }}</dd>
-      <dt>Busy until</dt><dd>{{ c.status.busy_until|day_hm(tz) if c.status.busy_until else "—" }}</dd>
-      <dt>Next booking</dt><dd>{{ c.status.next_busy|day_hm(tz) if c.status.next_busy else "—" }}</dd>
-    </dl>
-    <div class="usage">
+    {% if holders %}{% set who = holders ~ (" until " ~ c.status.busy_until|day_hm(tz) if c.status.busy_until else "") %}
+    {% elif c.status.next_busy %}{% set who = "Next booking " ~ c.status.next_busy|day_hm(tz) %}
+    {% else %}{% set who = "No upcoming bookings" %}{% endif %}
+    <p class="server-card__who{{ ' muted' if not holders }}" title="{{ who }}">{% if holders %}<span class="muted">In use by</span> {% endif %}{{ who }}</p>
+    <div class="usage usage--grid">
       {% if c.server.kind == "standalone" %}
       <p class="usage__none">standalone — not monitored</p>
       {% elif c.pending %}
@@ -25,17 +28,23 @@
       {% else %}
       {{ bar("CPU", c.usage.cpu_pct) }}
       {{ bar("RAM", c.usage.ram_pct) }}
+      {% set many = c.usage.gpus|length > 1 %}
       {% for g in c.usage.gpus %}
-      <p class="usage__gpu">{{ g.label(loop.index0, c.usage.gpus|length) }}</p>
-      {{ bar("Util", g.util_pct) }}
-      {{ bar("Mem", g.mem_pct) }}
+      {{ bar("GPU" ~ ((" " ~ (g.index if g.index is not none else loop.index0)) if many else ""), g.util_pct) }}
+      {{ bar("VRAM", g.mem_pct) }}
       {% endfor %}
       {% endif %}
     </div>
+    {% set own = mine.get(c.server.id) if mine else none %}
     <div class="actions">
       {% if c.server.enabled %}<a class="btn btn--primary btn--sm" href="/book?server_id={{ c.server.id }}">Book</a>{% endif %}
-      {% if c.status.code.value != "available" %}
-      <form method="post" action="/watch/{{ c.server.id }}" class="inline"><button type="submit" class="btn btn--sm">Notify me when free</button></form>
+      {% if own and own.running %}
+      <form method="post" action="/bookings/{{ own.booking.id }}/end" class="inline" data-confirm="End your booking on {{ c.server.name }}? It ends at the next full hour." onsubmit="return confirm(this.dataset.confirm)"><input type="hidden" name="next" value="/"><button type="submit" class="btn btn--danger btn--sm">End booking</button></form>
+      {% elif own %}
+      <form method="post" action="/bookings/{{ own.booking.id }}/cancel" class="inline" data-confirm="Cancel your booking on {{ c.server.name }} ({{ own.booking.start|day_hm(tz) }})?" onsubmit="return confirm(this.dataset.confirm)"><input type="hidden" name="next" value="/"><button type="submit" class="btn btn--danger btn--sm">Cancel booking</button></form>
+      {% endif %}
+      {% if c.status.code.value != "available" and not (own and own.running) %}
+      <form method="post" action="/watch/{{ c.server.id }}" class="inline"><button type="submit" class="btn btn--sm" title="Get a Telegram message when it is free">Notify me</button></form>
       {% endif %}
     </div>
   </article>

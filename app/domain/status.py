@@ -10,7 +10,7 @@ STATUS_EMOJI: dict[StatusCode, str] = {
     StatusCode.BOOKED_SOON: "🟠",
     StatusCode.BOOKED: "🔴",
     StatusCode.FREE_SOON: "🔴➜🟢",
-    StatusCode.SHAREABLE: "🟡",
+    StatusCode.SHAREABLE: "🟣",
     StatusCode.UNAVAILABLE: "⚪",
 }
 
@@ -24,7 +24,7 @@ STATUS_LABEL: dict[StatusCode, str] = {
 }
 
 LEGEND_TEXT = (
-    "🟢 available · 🟠 booked soon · 🔴 booked · 🔴➜🟢 free soon · 🟡 shareable · ⚪ unavailable"
+    "🟢 available · 🟠 booked soon · 🔴 booked · 🔴➜🟢 free soon · 🟣 shareable · ⚪ unavailable"
 )
 
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")

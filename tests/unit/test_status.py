@@ -109,4 +109,4 @@ def test_booking_starting_exactly_now_is_current():
 
 def test_legend_and_maps():
     assert set(STATUS_EMOJI) == set(StatusCode) == set(STATUS_LABEL)
-    assert LEGEND_TEXT == "🟢 available · 🟠 booked soon · 🔴 booked · 🔴➜🟢 free soon · 🟡 shareable · ⚪ unavailable"
+    assert LEGEND_TEXT == "🟢 available · 🟠 booked soon · 🔴 booked · 🔴➜🟢 free soon · 🟣 shareable · ⚪ unavailable"

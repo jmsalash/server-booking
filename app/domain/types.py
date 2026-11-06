@@ -14,13 +14,17 @@ class GpuUsage:
     index: int | None = None  # device number as nvidia-smi / CUDA_VISIBLE_DEVICES see it
     model: str | None = None  # e.g. "NVIDIA GeForce RTX 5090"
 
+    @property
+    def short_model(self) -> str | None:
+        """`NVIDIA GeForce RTX 5090` -> `RTX 5090`."""
+        return _MODEL_NOISE.sub("", self.model or "").strip() or None
+
     def label(self, position: int, total: int) -> str:
         """`GPU · RTX 5090` on single-GPU servers, `GPU 1 · RTX 4090` when there are several."""
         name = "GPU"
         if total > 1:
             name += f" {self.index if self.index is not None else position}"
-        model = _MODEL_NOISE.sub("", self.model or "").strip()
-        return f"{name} · {model}" if model else name
+        return f"{name} · {self.short_model}" if self.short_model else name
 
 
 @dataclass(frozen=True)
