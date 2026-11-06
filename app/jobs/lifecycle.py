@@ -11,11 +11,11 @@ from app.settings_store import K, SettingsStore
 
 START_REMINDER = timedelta(minutes=30)
 END_REMINDER = timedelta(minutes=60)
-FREE = frozenset({StatusCode.AVAILABLE, StatusCode.BOOKED_SOON, StatusCode.SHAREABLE})
+# Completely free: nobody's booking is running. Only this fires watchers ("Notify me") and the
+# topic's "now free" post. SHAREABLE (one person in, one more may join) is busy for both, so
+# BOOKED <-> SHAREABLE (a partner joins or leaves) never fires or posts, and a watcher's
+# subscription is kept until the machine is really free.
 FREED = frozenset({StatusCode.AVAILABLE, StatusCode.BOOKED_SOON})
-# SHAREABLE (one person in, one more may join) is "free" for watchers — they can book now —
-# but busy for the topic: SHAREABLE -> AVAILABLE posts "freed"; it is not in FREED, so
-# BOOKED <-> SHAREABLE (a partner joins or leaves) never posts.
 BUSY = frozenset({StatusCode.BOOKED, StatusCode.FREE_SOON, StatusCode.SHAREABLE})
 
 
@@ -62,7 +62,7 @@ async def _transitions(db: AsyncSession, store: SettingsStore, now: datetime) ->
         await db.flush()
         if new == StatusCode.UNAVAILABLE or prev == new:
             continue
-        if new in FREE and prev not in FREE:
+        if new in FREED and prev not in FREED:
             await watchlist.fire(db, store, server, card.status, now)
         if prev in BUSY and new in FREED:
             await notify.post_topic(db, store, "freed", f"🟢 {server.name} is now free.", now)

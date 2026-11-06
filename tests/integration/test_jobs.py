@@ -440,11 +440,27 @@ async def test_partner_joining_and_leaving_does_not_post_freed(db, store, make_u
         codes.append(srv.last_status_code)
     assert codes == ["shareable", "booked", "shareable"]
     assert await _topic_texts(db) == []
-    # A watcher hears that they can join; they are told once.
+    # "One more person can join" is not free: the watcher hears nothing and stays subscribed.
+    assert await _texts(db, watcher.telegram_id) == []
+    assert len(await watchlist.for_user(db, watcher.id)) == 1
+
+
+async def test_watcher_told_only_when_completely_free(db, store, make_user, make_server):
+    await _configure_topic(store)
+    owner, bea, watcher = await make_user(), await make_user(), await make_user()
+    server = await make_server(name="gpu-07", kind="grafana", has_gpu=True, gpu_count=1)
+    await _book(db, owner, server, L("2026-11-10T09:00"), L("2026-11-10T12:00"), shareable=True)
+    await _book(db, bea, server, L("2026-11-10T09:00"), L("2026-11-10T10:00"), is_shared=True)
+    await booking_lifecycle(db, store, L("2026-11-10T09:30"))  # booked (shared)
+    assert await watchlist.subscribe(db, watcher.id, server.id, L("2026-11-10T09:30"))
+    await booking_lifecycle(db, store, L("2026-11-10T10:30"))  # partner left: shareable
+    assert await _texts(db, watcher.telegram_id) == []
+    await booking_lifecycle(db, store, L("2026-11-10T12:00"))  # owner done: free
     assert await _texts(db, watcher.telegram_id) == [
-        "🟣 gpu-05 is in use, but one more person can join. "
-        f"Book: https://portal.lab/book?server_id={server.id}"
+        f"🟢 gpu-07 is now Available. Book: https://portal.lab/book?server_id={server.id}"
     ]
+    assert await watchlist.for_user(db, watcher.id) == []
+    assert await _topic_texts(db) == ["🟢 gpu-07 is now free."]
 
 
 async def test_shareable_to_available_posts_freed_once(db, store, make_user, make_server):

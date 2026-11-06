@@ -68,7 +68,7 @@
       <form method="post" action="/bookings/{{ own.booking.id }}/cancel" class="inline" data-confirm="Cancel your booking on {{ c.server.name }} ({{ own.booking.start|day_hm(tz) }})?" onsubmit="return confirm(this.dataset.confirm)"><input type="hidden" name="next" value="/"><button type="submit" class="btn btn--danger btn--sm" title="Cancel your booking ({{ own.booking.start|day_hm(tz) }})">Cancel mine</button></form>
       {% endif %}
       {% if c.status.code.value != "available" and not (own and own.running) %}
-      <form method="post" action="/watch/{{ c.server.id }}" class="inline"><button type="submit" class="btn btn--sm" title="Get a Telegram message when it is free">Notify me</button></form>
+      <form method="post" action="/watch/{{ c.server.id }}" class="inline"><button type="submit" class="btn btn--sm" title="Get a Telegram message when nobody is using it">Notify me</button></form>
       {% endif %}
     </div>
   </article>

@@ -155,7 +155,9 @@ In Telegram: 🟢 available, 🟠 booked soon, 🔴 booked, 🔴➜🟢 free soo
 
 **Bot commands.** `/status` lists all servers (`/status <server>` shows one in
 detail), `/free` lists servers that are free now, and `/notify <server>` asks
-the bot to message you when that server becomes free. A machine in use that has been
+the bot to message you when that server becomes completely free (nobody's booking
+running; a machine where one more person can join does not count, and the topic's
+"now free" post follows the same rule). A machine in use that has been
 quiet for at least the idle window shows "💤 Quiet for 2 h 15 min (no activity
 since 11:05)", so you can ask the person who booked it.
 In the group topic, address commands to the bot: `/status@<your_bot>`,
