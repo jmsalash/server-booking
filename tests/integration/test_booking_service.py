@@ -78,7 +78,7 @@ async def test_create_validation_error_rejected(db, store, make_user, make_serve
     user = await make_user()
     server = await make_server()
     with pytest.raises(BookingRejected) as e:
-        await create_booking(db, store, user, server.id, at(10), at(14), "cpu", NOW)
+        await create_booking(db, store, user, server.id, at(9), at(12), "cpu", NOW)
     assert e.value.error == BookingError.IN_PAST
     assert await _items(db) == []
 
@@ -509,3 +509,24 @@ async def test_inactive_admin_may_still_extend(db, store, make_user, make_server
     b = await _add(db, owner, server, at(14), at(16))
     await extend(db, store, b.id, admin, at(18), NOW)
     assert b.end_at == at(18)
+
+
+async def test_backdated_booking_allowed_into_free_past_time(db, store, make_user, make_server):
+    user = await make_user()
+    server = await make_server()
+    b = await create_booking(db, store, user, server.id, at(9), at(15), "cpu", NOW)
+    assert (b.start_at, b.end_at, b.status) == (at(9), at(15), "active")
+
+
+async def test_backdated_booking_cannot_claim_someone_elses_past_time(db, store, make_user,
+                                                                     make_server):
+    bob, ana = await make_user(), await make_user()
+    server = await make_server()
+    db.add(Booking(user_id=bob.id, server_id=server.id, start_at=at(8), end_at=at(11),
+                   resource="cpu", status="completed"))
+    await db.flush()
+    with pytest.raises(BookingRejected) as e:
+        await create_booking(db, store, ana, server.id, at(10), at(15), "cpu", NOW)
+    assert e.value.error == BookingError.CONFLICT
+    b = await create_booking(db, store, ana, server.id, at(11), at(15), "cpu", NOW)
+    assert b.start_at == at(11)

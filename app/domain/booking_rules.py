@@ -16,10 +16,14 @@ class BookingRequest:
     user_id: int | None = None  # the booker; overlapping your own booking is a CONFLICT
 
 
+MAX_BACKDATE = timedelta(hours=24)  # how far back a new booking may start
+
+
 class BookingError(StrEnum):
     NOT_HOUR_ALIGNED = "NOT_HOUR_ALIGNED"
     END_NOT_AFTER_START = "END_NOT_AFTER_START"
     IN_PAST = "IN_PAST"
+    TOO_FAR_BACK = "TOO_FAR_BACK"
     TOO_LONG = "TOO_LONG"
     NO_GPU = "NO_GPU"
     SERVER_DISABLED = "SERVER_DISABLED"
@@ -75,8 +79,12 @@ def validate_booking(
         return _fail(BookingError.NOT_HOUR_ALIGNED)
     if req.end <= req.start:
         return _fail(BookingError.END_NOT_AFTER_START)
-    if req.start < hour:
+    # A booking may start in the past (e.g. you started working before booking), up to
+    # MAX_BACKDATE, but it must still be running: a booking that is already over is refused.
+    if req.end <= now:
         return _fail(BookingError.IN_PAST)
+    if req.start < hour - MAX_BACKDATE:
+        return _fail(BookingError.TOO_FAR_BACK)
     if req.end - req.start > timedelta(hours=rules.max_booking_hours):
         return _fail(BookingError.TOO_LONG)
     if req.resource == "cpu_gpu" and not server.has_gpu:

@@ -104,6 +104,17 @@ def _ceil_hour(now: datetime, tz: str) -> datetime:
     return floor if floor == now else floor + timedelta(hours=1)
 
 
+async def _ended_overlap(db: AsyncSession, server_id: int, start: datetime, now: datetime) -> bool:
+    """Is there a booking that already ended (completed) inside [start, now)?"""
+    hit = await db.scalar(
+        select(Booking.id).where(
+            Booking.server_id == server_id, Booking.status == "completed",
+            Booking.start_at < now, Booking.end_at > start,
+        ).limit(1)
+    )
+    return hit is not None
+
+
 async def create_booking(
     db: AsyncSession,
     store: SettingsStore,
@@ -131,6 +142,9 @@ async def create_booking(
     )
     if not v.ok:
         raise BookingRejected(v.error, v.host)
+    if start < now and await _ended_overlap(db, server_id, start, now):
+        # Back-dating may only claim past time nobody else had booked.
+        raise BookingRejected(BookingError.CONFLICT)
     if v.is_shared and not confirm_shared:
         raise ShareConfirmationRequired(v.share_with)
 

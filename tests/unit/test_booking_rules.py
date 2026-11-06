@@ -68,8 +68,12 @@ def test_current_hour_start_allowed():
     assert v(req(12, 14)).ok
 
 
-def test_past_rejected():
-    assert v(req(11, 14)).error == E.IN_PAST
+def test_start_in_the_past_allowed_while_still_running():
+    assert v(req(9, 14)).ok                       # started this morning, ends later today
+    assert v(req(9, 12)).error == E.IN_PAST       # already over (now is 12:20)
+    day = timedelta(days=1)
+    assert v(BookingRequest(L(13) - day, L(14), "gpu", None)).ok        # 23 h back
+    assert v(BookingRequest(L(11) - day, L(14), "gpu", None)).error == E.TOO_FAR_BACK
 
 
 def test_max_14_days():
