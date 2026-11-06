@@ -230,8 +230,8 @@ async def on_command(
         if command in ("status", "free") and not (command == "status" and arg):
             cards = [c for c in await board.build_board(db, store, now) if c.server.enabled]
             if command == "free":
-                return Reply(fmt.free_list(cards, tz, portal))
-            return Reply(fmt.status_list(cards, tz, portal))
+                return Reply(fmt.free_list(cards, tz, portal, now))
+            return Reply(fmt.status_list(cards, tz, portal, now))
 
         if command == "notify" and not arg:
             return Reply(NOTIFY_USAGE)

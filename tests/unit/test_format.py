@@ -12,15 +12,17 @@ URL = "https://book.lab"
 NOW = datetime(2026, 11, 5, 11, 0, tzinfo=timezone.utc)  # Thu 05 12:00 Rome
 
 
-def bv(user, start, hours, bid=1):
-    return BookingView(bid, 1, user, 1, start, start + timedelta(hours=hours), "cpu", False)
+def bv(user, start, hours, bid=1, resource="cpu", shared=False, shareable=False):
+    return BookingView(bid, 1, user, 1, start, start + timedelta(hours=hours), resource, shared,
+                       shareable=shareable)
 
 
 def card(code, name="gpu-01", label=None, holders=(), next_busy=None, kind="grafana",
          usage=None, stale=False, upcoming=(), pending=False):
-    info = ServerInfo(1, name, kind, True, 2, True, code != StatusCode.UNAVAILABLE)
+    info = ServerInfo(1, name, kind, True, 2, code != StatusCode.UNAVAILABLE)
     status = ServerStatus(code, label or code.value, None, next_busy, tuple(holders))
-    return ServerCard(info, status, usage, stale, list(upcoming), pending)
+    current = tuple(b for b in upcoming if b.start <= NOW < b.end)
+    return ServerCard(info, status, usage, stale, list(upcoming), pending, current)
 
 
 def test_status_list_has_emoji_legend_and_link():
@@ -101,7 +103,7 @@ def test_detail_current_and_next_three_bookings():
         bv(f"U{i}", NOW + timedelta(days=i), 1, i + 1) for i in range(1, 5)
     ]
     text = server_detail(card(StatusCode.BOOKED, upcoming=up), TZ, URL, NOW)
-    assert "Now: Ana until Thu 05 13:00" in text
+    assert "• Ana — CPU — until 13:00" in text
     assert "U1 Fri 06 12:00 → Fri 06 13:00" in text
     assert "U3" in text and "U4" not in text
     assert text.endswith(f"Book: {URL}")
@@ -114,3 +116,26 @@ def test_idle_warning_text():
     )
     assert "idle for 1 hour. " in idle_warning("gpu-01", 1, 3, 60)
     assert "idle for 90 minutes. " in idle_warning("gpu-01", 1, 3, 90)
+
+
+def test_status_list_one_line_per_person():
+    up = [bv("Ana", NOW - timedelta(hours=1), 6, 1, shareable=True),
+          bv("Bob", NOW, 2, 2, resource="cpu_gpu", shared=True)]
+    text = status_list([card(StatusCode.BOOKED, label="Booked until Thu 05 17:00",
+                             holders=["Ana", "Bob"], upcoming=up)], TZ, URL, NOW)
+    lines = text.split("\n")
+    assert lines[:3] == ["🔴 gpu-01 — Booked until Thu 05 17:00",
+                         "• Ana — CPU — until 17:00",
+                         "• Bob — CPU + GPU — until 14:00"]
+    assert "can join" not in text and "(can share)" not in text
+
+
+def test_shareable_server_adds_join_line():
+    up = [bv("Ana", NOW - timedelta(hours=1), 30, 1, shareable=True)]
+    text = free_list([card(StatusCode.SHAREABLE, label="In use — can share", holders=["Ana"],
+                           upcoming=up)], TZ, URL, NOW)
+    assert text.split("\n")[:3] == ["🟣 gpu-01 — In use — can share",
+                                     "• Ana — CPU — until Fri 06 17:00",
+                                     "🟣 One more person can join"]
+    detail = server_detail(card(StatusCode.SHAREABLE, upcoming=up), TZ, URL, NOW)
+    assert "🟣 One more person can join" in detail

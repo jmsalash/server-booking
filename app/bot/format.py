@@ -1,18 +1,28 @@
 from collections.abc import Sequence
 from datetime import datetime
 
-from app.domain.status import LEGEND_TEXT, STATUS_EMOJI, format_day_hm
-from app.domain.types import StatusCode
+from app.domain.status import LEGEND_TEXT, STATUS_EMOJI, format_day_hm, format_hm_or_day
+from app.domain.types import BookingView, StatusCode
 from app.services.board import ServerCard
 
 FREE_CODES = (StatusCode.AVAILABLE, StatusCode.BOOKED_SOON, StatusCode.SHAREABLE)
 DETAIL_NEXT = 3
+CAN_JOIN = "🟣 One more person can join"
+
+
+def _resource(b: BookingView) -> str:
+    return "CPU + GPU" if b.resource == "cpu_gpu" else "CPU"
+
+
+def _person(b: BookingView, tz: str, now: datetime | None) -> str:
+    until = format_hm_or_day(b.end, tz, now) if now else format_day_hm(b.end, tz)
+    return f"• {b.user_name} — {_resource(b)} — until {until}"
 
 
 def _line(card: ServerCard, tz: str) -> str:
     st = card.status
     parts = [f"{STATUS_EMOJI[st.code]} {card.server.name} — {st.label}"]
-    if st.holders:
+    if st.holders and not card.current:  # cards built without per-person details
         parts.append(", ".join(st.holders))
     # BOOKED_SOON's label already reads "Booked from HH:MM".
     if st.next_busy is not None and st.code != StatusCode.BOOKED_SOON:
@@ -20,20 +30,32 @@ def _line(card: ServerCard, tz: str) -> str:
     return " · ".join(parts)
 
 
+def _block(card: ServerCard, tz: str, now: datetime | None) -> list[str]:
+    """The server's status line, then one line per person using it now."""
+    lines = [_line(card, tz), *(_person(b, tz, now) for b in card.current)]
+    if card.status.code == StatusCode.SHAREABLE:
+        lines.append(CAN_JOIN)
+    return lines
+
+
 def _footer(portal_url: str) -> list[str]:
     return [f"Book: {portal_url}"] if portal_url else []
 
 
-def status_list(cards: Sequence[ServerCard], tz: str, portal_url: str) -> str:
-    lines = [_line(c, tz) for c in cards]
+def status_list(
+    cards: Sequence[ServerCard], tz: str, portal_url: str, now: datetime | None = None
+) -> str:
+    lines = [line for c in cards for line in _block(c, tz, now)]
     return "\n".join([*lines, "", LEGEND_TEXT, *_footer(portal_url)])
 
 
-def free_list(cards: Sequence[ServerCard], tz: str, portal_url: str) -> str:
+def free_list(
+    cards: Sequence[ServerCard], tz: str, portal_url: str, now: datetime | None = None
+) -> str:
     free = [c for c in cards if c.status.code in FREE_CODES]
     if not free:
         return "\n".join(["No server is free right now.", *_footer(portal_url)])
-    return status_list(free, tz, portal_url)
+    return status_list(free, tz, portal_url, now)
 
 
 def _usage_line(card: ServerCard) -> str:
@@ -51,11 +73,12 @@ def _usage_line(card: ServerCard) -> str:
 
 
 def server_detail(card: ServerCard, tz: str, portal_url: str, now: datetime) -> str:
-    lines = [_line(card, tz), _usage_line(card)]
-    current = [b for b in card.upcoming if b.start <= now < b.end]
+    current = card.current
+    lines = [_line(card, tz), *(_person(b, tz, now) for b in current)]
+    if card.status.code == StatusCode.SHAREABLE:
+        lines.append(CAN_JOIN)
+    lines.append(_usage_line(card))
     later = [b for b in card.upcoming if b.start > now][:DETAIL_NEXT]
-    for b in current:
-        lines.append(f"Now: {b.user_name} until {format_day_hm(b.end, tz)}")
     if later:
         lines.append("Next:")
         lines += [
