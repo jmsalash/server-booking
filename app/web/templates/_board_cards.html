@@ -64,7 +64,11 @@
       <form method="post" action="/bookings/{{ own.booking.id }}/cancel" class="inline" data-confirm="Cancel your booking on {{ c.server.name }}?" data-confirm-text="{{ own.booking.start|day_hm(tz) }} – {{ own.booking.end|day_hm(tz) }}" data-confirm-ok="Cancel booking"><input type="hidden" name="next" value="/"><button type="submit" class="btn btn--danger btn--sm" title="Cancel your booking ({{ own.booking.start|day_hm(tz) }})">Cancel mine</button></form>
       {% endif %}
       {% if c.status.code.value != "available" and not (own and own.running) %}
+      {% if c.server.id in watching %}
+      <button type="button" class="btn btn--sm" disabled title="You'll get a Telegram message when nobody is using it. Stop it under My bookings.">✓ Notifying you</button>
+      {% else %}
       <form method="post" action="/watch/{{ c.server.id }}" class="inline"><button type="submit" class="btn btn--sm" title="Get a Telegram message when nobody is using it">Notify me</button></form>
+      {% endif %}
       {% endif %}
     </div>
   </article>

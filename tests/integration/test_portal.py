@@ -105,6 +105,14 @@ async def test_board_cards_partial_and_watch_button(client, logged_in, db, make_
     assert f'action="/watch/{busy.id}"' in r.text
     assert f'action="/watch/{free.id}"' not in r.text
     assert f"/book?server_id={free.id}" in r.text
+    assert "Notifying you" not in r.text
+
+    # Once asked, the card says so instead of offering it again.
+    r = await client.post(f"/watch/{busy.id}")
+    assert r.status_code == 303
+    r = await client.get("/board/cards")
+    assert f'action="/watch/{busy.id}"' not in r.text
+    assert "✓ Notifying you</button>" in r.text and "disabled" in r.text
 
 
 async def test_usage_bars_for_fresh_metrics(client, logged_in, db, make_server):

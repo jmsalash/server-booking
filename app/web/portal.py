@@ -181,6 +181,7 @@ async def _board_ctx(db: AsyncSession, store: SettingsStore, user: User) -> dict
     return {"user": user, "cards": cards, "tz": rules.timezone, "legend": legend(rules),
             "status_names": {c.value: label for c, label in STATUS_LABEL.items()},
             "monitoring_down": board.monitoring_down(cards), "mine": mine, "join": join,
+            "watching": {s.server_id for s in await watchlist.for_user(db, user.id)},
             "now": now, "ram_alert": rules.ram_alert_pct}
 
 
