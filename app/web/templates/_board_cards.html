@@ -8,13 +8,13 @@
       <h2 class="server-card__name">{{ c.server.name }}</h2>
       <span class="chip chip--{{ c.status.code.value }}"><span class="dot dot--{{ c.status.code.value }}" aria-hidden="true"></span>{{ c.status.label }}</span>
     </header>
-    {% if c.status.holders or c.status.busy_until or c.status.next_busy %}
+    {# Same three rows on every card so booking a machine never changes the card's size. #}
+    {% set holders = c.status.holders|join(", ") %}
     <dl class="meta">
-      {% if c.status.holders %}<dt>In use by</dt><dd>{{ c.status.holders|join(", ") }}</dd>{% endif %}
-      {% if c.status.busy_until %}<dt>Busy until</dt><dd>{{ c.status.busy_until|day_hm(tz) }}</dd>{% endif %}
-      {% if c.status.next_busy %}<dt>Next booking</dt><dd>{{ c.status.next_busy|day_hm(tz) }}</dd>{% endif %}
+      <dt>In use by</dt><dd{% if holders %} title="{{ holders }}"{% endif %}>{{ holders or "—" }}</dd>
+      <dt>Busy until</dt><dd>{{ c.status.busy_until|day_hm(tz) if c.status.busy_until else "—" }}</dd>
+      <dt>Next booking</dt><dd>{{ c.status.next_busy|day_hm(tz) if c.status.next_busy else "—" }}</dd>
     </dl>
-    {% endif %}
     <div class="usage">
       {% if c.server.kind == "standalone" %}
       <p class="usage__none">standalone — not monitored</p>

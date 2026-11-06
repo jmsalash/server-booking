@@ -106,6 +106,8 @@ ul, ol { margin: 0 0 var(--s3); padding-left: 1.25rem; }
 .stack > * + * { margin-top: var(--s4); }
 
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: var(--s4); align-items: start; }
+/* Board: every server card is the same height (the tallest one's), whatever its bookings. */
+.cards:has(> .server-card) { grid-auto-rows: 1fr; align-items: stretch; }
 .cards > .card { margin: 0; }
 
 /* --- buttons ----------------------------------------------------------------------------- */
@@ -220,10 +222,10 @@ td .alert { margin: 0; }
 .server-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s2); }
 .server-card__name { margin: 0; font-size: var(--fs-lg); overflow-wrap: anywhere; }
 .server-card__status { font-size: var(--fs-sm); font-weight: 550; margin: 0; }
-.server-card .actions { margin-top: auto; padding-top: var(--s3); border-top: 1px solid var(--line); }
+.server-card .actions { margin-top: auto; padding-top: var(--s3); border-top: 1px solid var(--line); min-height: calc(var(--s3) + 2.1rem); }
 .meta { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: .15rem var(--s3); font-size: var(--fs-sm); }
 .meta dt { color: var(--muted); }
-.meta dd { margin: 0; }
+.meta dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .usage { display: grid; gap: .4rem; font-size: var(--fs-sm); }
 .usage p { margin: 0; }
