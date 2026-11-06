@@ -147,8 +147,8 @@ def durations(o: Offer, rules: Rules, now: datetime) -> list[tuple[str, str]]:
     limit = min(limits, default=None)
     longest = start + timedelta(hours=rules.max_booking_hours)
     today = now.astimezone(ZoneInfo(tz)).date()
-    candidates = [("2 h", start + timedelta(hours=2), "2"),
-                  ("4 h", start + timedelta(hours=4), "4")]
+    candidates = [(f"2 h (until {_hm(_at_least(2, now, tz), rules, now)})", _at_least(2, now, tz), "2"),
+                  (f"4 h (until {_hm(_at_least(4, now, tz), rules, now)})", _at_least(4, now, tz), "4")]
     end_today = _work_end(today, rules)
     if end_today > start + timedelta(hours=1):
         candidates.append((f"Until {rules.work_end} today", end_today, _abs(end_today)))
@@ -171,9 +171,16 @@ def durations(o: Offer, rules: Rules, now: datetime) -> list[tuple[str, str]]:
     return [(label, code) for _, label, code in sorted(chosen, key=lambda c: c[0])]
 
 
-def _end(code: str, start: datetime) -> datetime:
+def _at_least(hours: int, now: datetime, tz: str) -> datetime:
+    """The first full hour at least `hours` from now: at 11:50, "2 h" ends at 14:00."""
+    target = now + timedelta(hours=hours)
+    end = floor_hour(target, tz)
+    return end if end == target else end + timedelta(hours=1)
+
+
+def _end(code: str, now: datetime, tz: str) -> datetime:
     if code.isdigit() and 1 <= int(code) <= MAX_HOURS_CODE:
-        return start + timedelta(hours=int(code))
+        return _at_least(int(code), now, tz)
     if code.startswith("U") and code[1:].isdigit() and len(code) <= 9:
         return datetime.fromtimestamp(int(code[1:]) * 3600, UTC)
     raise BadData(code)
@@ -215,7 +222,7 @@ async def book_step(
         raise BadData(parts)
     sid = _id(parts[0])
     start = floor_hour(now, rules.timezone)
-    end = _end(parts[1], start) if len(parts) > 1 else None
+    end = _end(parts[1], now, rules.timezone) if len(parts) > 1 else None
     if len(parts) > 2 and parts[2] not in RESOURCES:
         raise BadData(parts[2])
     resource = RESOURCES[parts[2]] if len(parts) > 2 else None

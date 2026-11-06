@@ -58,7 +58,12 @@ async def _press(bot_ctx, data, tg=ANA, now=NOW):
 
 
 def _data(reply, label):
-    return next(d for lbl, d in reply.buttons if lbl == label)
+    """Button data by label; "2 h" also matches "2 h (until 14:00)"."""
+    return next(d for lbl, d in reply.buttons if lbl == label or lbl.startswith(label + " ("))
+
+
+def _labels(reply):
+    return [lbl.split(" (until")[0] for lbl, _ in reply.buttons]
 
 
 async def _add(db, user, server, start, end, resource="cpu", **kw):
@@ -218,8 +223,10 @@ async def test_full_flow_books_with_gpu_and_sharing(bot_ctx, db, store, make_ser
     r = await _press(bot_ctx, _data(r, "gpu-05 · 1 GPU"))
     seen += r.buttons
     assert r.text == "For how long, from now?\ngpu-05, starting 11:00."
+    # At 11:20, "2 h" means at least two hours: until 14:00.
     assert [lbl for lbl, _ in r.buttons] == [
-        "2 h", "4 h", "Until 19:00 today", "Until tomorrow 19:00", "✖ Cancel"]
+        "2 h (until 14:00)", "4 h (until 16:00)", "Until 19:00 today", "Until tomorrow 19:00",
+        "✖ Cancel"]
     r = await _press(bot_ctx, _data(r, "Until 19:00 today"))
     seen += r.buttons
     assert r.text == "What will you use?\ngpu-05, 11:00–19:00."
@@ -248,24 +255,24 @@ async def test_cpu_only_skips_resource_step_and_no_calendar_sentence(
     _member(bot_ctx)
     r = await _press(bot_ctx, f"bk:{s.id}")
     r = await _press(bot_ctx, _data(r, "2 h"))
-    assert r.text.startswith("Allow sharing?\ncpu-03, 11:00–13:00, CPU.")
+    assert r.text.startswith("Allow sharing?\ncpu-03, 11:00–14:00, CPU.")
     r = await _press(bot_ctx, _data(r, "No"))
-    assert r.text == "✅ cpu-03 booked 11:00–13:00 (CPU)."
+    assert r.text == "✅ cpu-03 booked 11:00–14:00 (CPU)."
     b = (await db.execute(select(Booking))).scalar_one()
-    assert (b.resource, b.shareable, b.end_at) == ("cpu", False, HOUR + h(2))
+    assert (b.resource, b.shareable, b.end_at) == ("cpu", False, HOUR + h(3))
 
 
 async def test_durations_trimmed_by_next_booking(bot_ctx, db, store, make_server, make_user):
     bob = await make_user(display_name="Bob")
     s = await make_server(name="cpu-03")
-    await _add(db, bob, s, HOUR + h(3), HOUR + h(5))
+    await _add(db, bob, s, HOUR + h(4), HOUR + h(6))
     await _configure(db, store)
     _member(bot_ctx)
     r = await _press(bot_ctx, f"bk:{s.id}")
-    assert [lbl for lbl, _ in r.buttons] == ["2 h", "Until 14:00", "✖ Cancel"]
-    r = await _press(bot_ctx, _data(r, "Until 14:00"))
+    assert _labels(r) == ["2 h", "Until 15:00", "✖ Cancel"]
+    r = await _press(bot_ctx, _data(r, "Until 15:00"))
     r = await _press(bot_ctx, _data(r, "No"))
-    assert r.text == "✅ cpu-03 booked 11:00–14:00 (CPU)."
+    assert r.text == "✅ cpu-03 booked 11:00–15:00 (CPU)."
 
 
 async def test_durations_trimmed_by_max_hours(bot_ctx, db, store, make_server):
@@ -277,26 +284,26 @@ async def test_durations_trimmed_by_max_hours(bot_ctx, db, store, make_server):
     await db.commit()
     _member(bot_ctx)
     r = await _press(bot_ctx, f"bk:{s.id}")
-    assert [lbl for lbl, _ in r.buttons] == ["2 h", "4 h", "✖ Cancel"]
+    assert _labels(r) == ["2 h", "4 h", "✖ Cancel"]
 
 
 async def test_join_skips_sharing_and_confirms(bot_ctx, db, store, make_server, make_user):
     bob = await make_user(display_name="Bob", telegram_id=BOB.id)
     s = await make_server(name="gpu-01", has_gpu=True, gpu_count=1)
-    host = await _add(db, bob, s, HOUR - h(1), HOUR + h(5), shareable=True)
+    host = await _add(db, bob, s, HOUR - h(1), HOUR + h(6), shareable=True)
     host_id = host.id
     await _configure(db, store)
     _member(bot_ctx)
     r = await _press(bot_ctx, f"bk:{s.id}")
     # Only ends inside Bob's booking, plus "until it ends".
-    assert [lbl for lbl, _ in r.buttons] == ["2 h", "4 h", "Until 16:00", "✖ Cancel"]
+    assert _labels(r) == ["2 h", "4 h", "Until 17:00", "✖ Cancel"]
     r = await _press(bot_ctx, _data(r, "4 h"))
     r = await _press(bot_ctx, _data(r, "CPU"))
-    assert r.text == "You'll share gpu-01 with Bob until 15:00 — confirm?"
+    assert r.text == "You'll share gpu-01 with Bob until 16:00 — confirm?"
     assert [lbl for lbl, _ in r.buttons] == ["Confirm", "✖ Cancel"]
     assert _data(r, "Confirm").endswith(f":j{host_id}")
     r = await _press(bot_ctx, _data(r, "Confirm"))
-    assert r.text == "✅ gpu-01 booked 11:00–15:00 (CPU). Shared with Bob."
+    assert r.text == "✅ gpu-01 booked 11:00–16:00 (CPU). Shared with Bob."
     db.expire_all()
     mine = (await db.execute(select(Booking).where(Booking.id != host_id))).scalar_one()
     assert mine.is_shared and not mine.shareable
@@ -341,9 +348,9 @@ async def test_final_step_asks_again_when_machine_became_shared(
     await _add(db, bob, s, HOUR, HOUR + h(4), shareable=True)
     await db.commit()
     r = await _press(bot_ctx, _data(r, "No"))
-    assert r.text == "You'll share cpu-03 with Bob until 13:00 — confirm?"
+    assert r.text == "You'll share cpu-03 with Bob until 14:00 — confirm?"
     r = await _press(bot_ctx, _data(r, "Confirm"))
-    assert r.text == "✅ cpu-03 booked 11:00–13:00 (CPU). Shared with Bob."
+    assert r.text == "✅ cpu-03 booked 11:00–14:00 (CPU). Shared with Bob."
 
 
 async def test_cancel_and_bad_data(bot_ctx, db, store, make_server):
