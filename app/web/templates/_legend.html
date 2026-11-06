@@ -3,14 +3,6 @@
     {% for code, label, meaning in legend %}
     <li title="{{ meaning }}"><span class="dot dot--{{ code }}" aria-hidden="true"></span>{{ label }}</li>
     {% endfor %}
+    <li><a class="legend__details" href="/about#colours">Details</a></li>
   </ul>
-  <details class="legend__more">
-    <summary>What do the colours mean?</summary>
-    <dl>
-      {% for code, label, meaning in legend %}
-      <dt><span class="dot dot--{{ code }}" aria-hidden="true"></span>{{ label }}</dt>
-      <dd>{{ meaning }}</dd>
-      {% endfor %}
-    </dl>
-  </details>
 </div>

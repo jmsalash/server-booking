@@ -168,14 +168,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .legend-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); flex-wrap: wrap; margin-bottom: var(--s4); }
 .legend { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--fs-sm); }
 .legend li { display: inline-flex; align-items: center; gap: .4rem; }
-.legend__more { font-size: var(--fs-sm); }
-.legend__more summary { cursor: pointer; color: var(--accent); }
-.legend__more dl {
-  display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s3); margin: var(--s2) 0 0;
-  padding: var(--s3) var(--s4); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-}
-.legend__more dt { display: flex; align-items: center; gap: .4rem; font-weight: 600; }
-.legend__more dd { margin: 0; color: var(--muted); }
+.legend__details { color: var(--muted); }
 
 /* --- badges ------------------------------------------------------------------------------ */
 
@@ -468,8 +461,6 @@ details[open] > summary { margin-bottom: var(--s2); }
   .extend input { flex: 1; }
   .extend .field { flex: 1; }
   .legend-bar { flex-direction: column; align-items: flex-start; }
-  .legend__more dl { grid-template-columns: 1fr; }
-  .legend__more dd { margin-bottom: var(--s2); }
 }
 
 /* --- utilities --------------------------------------------------------------------------- */
@@ -497,8 +488,8 @@ p.help + p.help { margin-top: var(--s2); }
 .about__cmds { border-collapse: collapse; width: 100%; font-size: var(--fs-sm); }
 .about__cmds td { padding: .3rem 0; vertical-align: top; border-top: 1px solid var(--line); }
 .about__cmds td:first-child { padding-right: var(--s3); white-space: nowrap; }
-.about__legend { list-style: none; padding: 0 !important; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-.about__legend li { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
+.about__legend td { padding: .45rem 0; vertical-align: middle; }
+.about__legend td:first-child { width: 9.5rem; }
 
 /* --- board: available cards and the "only available" filter ----------------------------- */
 .server-card--available { background: #f3fbf5; border-color: #cfe9d6; }

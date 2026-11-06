@@ -89,6 +89,9 @@ async def test_board_shows_legend_and_dots(client, logged_in, db, make_user, mak
     assert "srv-a" in r.text and "Bob" in r.text
     assert "standalone — not monitored" in r.text
     assert 'hx-get="/board/cards"' in r.text and "every 60s" in r.text
+    # The meanings live on the About page; the board keeps the one-line key and links there.
+    assert "What do the colours mean?" not in r.text
+    assert 'href="/about#colours"' in r.text
 
 
 async def test_board_cards_partial_and_watch_button(client, logged_in, db, make_user, make_server):
@@ -934,6 +937,10 @@ async def test_about_page_explains_bot_and_rules(client, logged_in, db, store):
         assert text in r.text, text
     assert ("Telegram warning if RAM on your machine passes 90%, or a disk on it becomes almost "
             "full (90%) during your booking") in r.text
+    assert 'id="colours"' in r.text
+    for code in ("available", "booked_soon", "booked", "free_soon", "shareable", "unavailable"):
+        assert f'<span class="chip chip--{code}">' in r.text, code
+    assert "In use, one more person can join." in r.text
 
 
 async def test_board_marks_available_cards_and_offers_filter(client, logged_in, db, make_user,

@@ -291,6 +291,10 @@ async def render(out: Path) -> list[str]:
     return written
 
 
+# Pages longer than one screen, shot whole (headless Chrome has no full-page flag).
+TALL = {"about": "1280,1400"}
+
+
 def screenshot(html: Path, png: Path, size: str) -> None:
     chrome = shutil.which("google-chrome") or shutil.which("chromium")
     subprocess.run([chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
@@ -306,7 +310,7 @@ def main() -> None:
     print("wrote", ", ".join(written))
     if "--shots" in sys.argv:
         for name in written:
-            screenshot(out / f"{name}.html", out / f"{name}.png", "1280,900")
+            screenshot(out / f"{name}.html", out / f"{name}.png", TALL.get(name, "1280,900"))
         screenshot(out / "board.html", out / "board-1280x800.png", "1280,800")
         # Headless Chrome lays out at least 500 px wide whatever --window-size says, so the
         # phone shots load the page in a 390 px iframe (its own viewport for media queries).

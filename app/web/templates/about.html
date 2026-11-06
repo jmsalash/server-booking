@@ -50,13 +50,13 @@
     </ul>
   </section>
 
-  <section class="card about__wide">
+  <section class="card about__wide" id="colours">
     <h2>Colours</h2>
-    <ul class="about__legend">
+    <table class="about__cmds about__legend">
       {% for code, label, meaning in legend %}
-      <li><span class="dot dot--{{ code }}" aria-hidden="true"></span><strong>{{ label }}</strong> <span class="muted">{{ meaning }}</span></li>
+      <tr><td><span class="chip chip--{{ code }}"><span class="dot dot--{{ code }}" aria-hidden="true"></span>{{ label }}</span></td><td>{{ meaning }}</td></tr>
       {% endfor %}
-    </ul>
+    </table>
   </section>
 </div>
 {% endblock %}
