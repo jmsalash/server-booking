@@ -933,6 +933,7 @@ async def test_about_page_explains_bot_and_rules(client, logged_in, db, store):
     r = await client.get("/about")
     assert r.status_code == 200
     for text in ("/status@lab_booking_bot", "/free@lab_booking_bot", "/notify@lab_booking_bot gpu-05",
+                 "<code>/book</code>", "<code>/mybookings</code>", "/help@lab_booking_bot",
                  "14 days", "2 h", "Mon–Fri 09:00–19:00", "Join", 'href="/about"'):
         assert text in r.text, text
     assert ("Telegram warning if RAM on your machine passes 90%, or a disk on it becomes almost "

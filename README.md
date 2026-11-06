@@ -173,6 +173,15 @@ In the group topic, address commands to the bot: `/status@<your_bot>`,
 Telegram reliably delivers only commands addressed to the bot. In a private chat
 with the bot, plain `/status` works.
 
+**Booking from Telegram.** In a private chat with the bot, `/book` books a
+machine starting now with a few buttons (machine, how long, CPU or CPU + GPU,
+allow sharing; a purple machine can be joined after a confirmation), and
+`/mybookings` lists your current and upcoming bookings with Extend +2 h, End now
+and Cancel buttons. They apply exactly the same rules and error messages as the
+portal. In the group, these two commands just point you to the private chat.
+`/help` lists the commands, and the bot registers its command menu with Telegram
+when it starts (group and private chats get their own lists).
+
 ## Operations
 
 **Backups.** Back up both volumes: `pgdata` (database) and `data`. The file
