@@ -156,6 +156,15 @@ async def seed(db, store) -> dict:
         Booking(user_id=u["Bob Bianchi"].id, server_id=s["retired-09"].id,
                 start_at=hour - 120 * h, end_at=hour - 110 * h, resource="cpu",
                 status="completed"),
+        # Calendar: from last week (completed), into next week, a Friday, and a 1 h slot.
+        Booking(user_id=u["Bob Bianchi"].id, server_id=s["legacy-06"].id, start_at=hour - 50 * h,
+                end_at=hour - 6 * h, resource="cpu", status="completed"),
+        Booking(user_id=u["Maria Francesca Delle Fontane"].id, server_id=s["legacy-06"].id,
+                start_at=hour + 120 * h, end_at=hour + 192 * h, resource="cpu"),
+        Booking(user_id=u["Chiara Verdi"].id, server_id=s["cpu-04"].id, start_at=hour + 96 * h,
+                end_at=hour + 104 * h, resource="cpu"),
+        Booking(user_id=u["Dario Neri"].id, server_id=s["cpu-03"].id, start_at=hour + 51 * h,
+                end_at=hour + 52 * h, resource="cpu"),
     ]
     db.add_all(bookings)
     for name, args in (
@@ -234,6 +243,7 @@ async def render(out: Path) -> list[str]:
             transport = httpx.ASGITransport(app=web)
             pages = {
                 "board": "/", "book": f"/book?server_id={ids['gpu-01']}", "me": "/me", "about": "/about",
+                "calendar": "/calendar",
                 "admin_servers": "/admin/servers", "server_edit": f"/admin/servers/{ids['gpu-01']}",
                 "server_new": "/admin/servers/new", "import": "/admin/servers/import",
                 "integrations": "/admin/integrations", "rules": "/admin/rules",
@@ -300,7 +310,7 @@ def main() -> None:
         screenshot(out / "board.html", out / "board-1280x800.png", "1280,800")
         # Headless Chrome lays out at least 500 px wide whatever --window-size says, so the
         # phone shots load the page in a 390 px iframe (its own viewport for media queries).
-        for name in ("board", "book", "me"):
+        for name in ("board", "book", "me", "calendar"):
             frame = out / f"{name}-mobile-frame.html"
             frame.write_text(
                 '<!DOCTYPE html><html><body style="margin:0">'

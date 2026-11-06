@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -6,6 +6,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
+from app.domain import calendar as cal
 from app.domain.booking_rules import BookingError
 from app.domain.idle import IdlePanel, idle_panel
 from app.domain.rules import Rules
@@ -14,6 +15,7 @@ from app.domain.timeutil import floor_hour, parse_local
 from app.domain.types import BookingView, StatusCode
 from app.models import Booking, LoginToken, Server, Session, User
 from app.services import auth, board, booking, watchlist
+from app.services import calendar as calendar_svc
 from app.services import usage as usage_svc
 from app.services.inventory import get_live, list_servers
 from app.settings_store import K, SettingsStore
@@ -235,6 +237,39 @@ async def board_cards(
     store: SettingsStore = Depends(get_store),
 ):
     return _render(request, "_board_cards.html", await _board_ctx(db, store, user))
+
+
+# --- calendar -------------------------------------------------------------------------------
+
+
+def _week_param(value: str | None, now: datetime, tz: str) -> cal.Week:
+    """The week containing `?week=YYYY-MM-DD`; this week if missing or not a sane date."""
+    try:
+        d = date.fromisoformat(value or "")
+    except ValueError:
+        return cal.week_of(now, tz)
+    if not MIN_YEAR <= d.year <= MAX_YEAR:
+        return cal.week_of(now, tz)
+    return cal.week_containing(d, tz)
+
+
+@router.get("/calendar")
+async def calendar_page(
+    request: Request,
+    week: str | None = None,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    store: SettingsStore = Depends(get_store),
+):
+    now = clock.utcnow()
+    rules = await store.get_rules()
+    w = _week_param(week, now, rules.timezone)
+    return _render(request, "calendar.html", {
+        "user": user, "tz": rules.timezone, "week": w, "range": cal.range_label(w),
+        "is_this_week": w.contains(now), "days": cal.day_columns(w, now),
+        "bands": cal.work_bands(w, rules), "now_pct": cal.now_pct(w, now),
+        "rows": await calendar_svc.build_week(db, w, now),
+    })
 
 
 # --- booking --------------------------------------------------------------------------------

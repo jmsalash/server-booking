@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Calendar — Lab Servers{% endblock %}
+{% macro pct(x) %}{{ "%.3f"|format(x) }}%{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Calendar</h1>
+    <p class="muted">Everyone's bookings, one week at a time. Times in {{ tz }}.</p>
+  </div>
+  <a class="btn btn--primary" href="/book">Book a server</a>
+</div>
+<div class="cal-nav">
+  <h2 class="cal-nav__range">{{ range }}</h2>
+  <div class="actions">
+    <a class="btn btn--sm" href="/calendar?week={{ week.prev.isoformat() }}" rel="prev">‹ Prev week</a>
+    <a class="btn btn--sm{{ ' is-current' if is_this_week }}" href="/calendar"{% if is_this_week %} aria-current="date"{% endif %}>This week</a>
+    <a class="btn btn--sm" href="/calendar?week={{ week.next.isoformat() }}" rel="next">Next week ›</a>
+  </div>
+</div>
+{% if rows %}
+<div class="cal" role="region" aria-label="Bookings for {{ range }}" tabindex="0">
+  <div class="cal__grid">
+    {# Day lines, office hours, today and "now" sit under the bars, across every row. #}
+    <div class="cal__overlay" aria-hidden="true">
+      {% for b in bands %}<span class="cal__work" style="left: {{ pct(b.left) }}; width: {{ pct(b.width) }}"></span>{% endfor %}
+      {% for d in days %}
+      {% if d.is_today %}<span class="cal__today" style="left: {{ pct(d.left) }}; width: {{ pct(d.width) }}"></span>{% endif %}
+      {% if not loop.first %}<span class="cal__line" style="left: {{ pct(d.left) }}"></span>{% endif %}
+      {% endfor %}
+      {% if now_pct is not none %}<span class="cal__now" style="left: {{ pct(now_pct) }}"></span>{% endif %}
+    </div>
+    <div class="cal__head">
+      <div class="cal__name cal__corner">Machine</div>
+      <div class="cal__days">
+        {% for d in days %}<span class="cal__day{{ ' cal__day--today' if d.is_today }}" style="left: {{ pct(d.left) }}; width: {{ pct(d.width) }}">{{ d.label }}</span>{% endfor %}
+      </div>
+    </div>
+    {% for row in rows %}
+    {% set s = row.server %}
+    <div class="cal__row{{ ' cal__row--off' if not s.enabled }}">
+      <div class="cal__name">
+        {% if s.enabled %}<a class="cal__server" href="/book?server_id={{ s.id }}" title="Book {{ s.name }}">{{ s.name }}</a>
+        {% else %}<span class="cal__server" title="{{ s.name }}">{{ s.name }}</span>{% endif %}
+        <span class="cal__sub">{% if not s.enabled %}<span class="chip chip--unavailable cal__chip">Unavailable</span>{% endif %}{{ row.sub }}</span>
+      </div>
+      <div class="cal__track">
+        {% for bar in row.bars %}
+        {% set b = bar.booking %}
+        {% set mine = b.user_id == user.id %}
+        {% set cls = "cal-bar cal-bar--lane" ~ bar.lane
+                     ~ (" cal-bar--mine" if mine else "")
+                     ~ (" cal-bar--shareable" if b.shareable else "")
+                     ~ (" cal-bar--past" if bar.past else "")
+                     ~ (" cal-bar--from-before" if bar.from_before else "")
+                     ~ (" cal-bar--into-after" if bar.into_after else "") %}
+        {% set style = "left: " ~ pct(bar.left) ~ "; width: " ~ pct(bar.width) %}
+        {% set inner %}{% if bar.from_before %}<span class="cal-bar__edge" aria-hidden="true">‹</span>{% endif %}<span class="cal-bar__text">{{ bar.label }}</span>{% if bar.into_after %}<span class="cal-bar__edge" aria-hidden="true">›</span>{% endif %}{% endset %}
+        {% if mine %}<a class="{{ cls }}" style="{{ style }}" href="/me" title="{{ bar.title(tz) }}">{{ inner }}</a>
+        {% else %}<span class="{{ cls }}" style="{{ style }}" title="{{ bar.title(tz) }}">{{ inner }}</span>{% endif %}
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+<ul class="legend cal-legend" aria-label="Calendar legend">
+  <li><span class="cal-swatch cal-bar--mine" aria-hidden="true"></span>You</li>
+  <li><span class="cal-swatch" aria-hidden="true"></span>Booked</li>
+  <li><span class="cal-swatch cal-bar--shareable" aria-hidden="true"></span>Shareable</li>
+  <li><span class="cal-swatch cal-swatch--joined" aria-hidden="true"></span>Shared (joined)</li>
+</ul>
+{% else %}
+<div class="empty"><p class="empty__title">No servers yet</p><p>An admin can add servers under Admin → Servers.</p></div>
+{% endif %}
+{% endblock %}

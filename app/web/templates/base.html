@@ -16,6 +16,7 @@
       <nav class="nav" aria-label="Main">
         <a href="/"{% if path == "/" %} aria-current="page"{% endif %}>Board</a>
         <a href="/book"{% if path == "/book" %} aria-current="page"{% endif %}>Book</a>
+        <a href="/calendar"{% if path == "/calendar" %} aria-current="page"{% endif %}>Calendar</a>
         <a href="/me"{% if path == "/me" %} aria-current="page"{% endif %}>My bookings</a>
         <a href="/about"{% if path == "/about" %} aria-current="page"{% endif %}>About</a>
         {% if user.is_admin %}<a href="/admin"{% if path.startswith("/admin") %} aria-current="page"{% endif %}>Admin</a>{% endif %}
