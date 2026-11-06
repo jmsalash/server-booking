@@ -437,12 +437,11 @@ async def _render_servers(
 def _server_values(server: Server | None) -> dict:
     if server is None:
         return {"name": "", "hostname": "", "kind": "grafana", "grafana_instance": "",
-                "has_gpu": False, "gpu_count": 0, "shareable": False, "enabled": True,
+                "has_gpu": False, "gpu_count": 0, "enabled": True,
                 "notes": ""}
     return {"name": server.name, "hostname": server.hostname, "kind": server.kind,
             "grafana_instance": server.grafana_instance or "", "has_gpu": server.has_gpu,
-            "gpu_count": server.gpu_count, "shareable": server.shareable,
-            "enabled": server.enabled, "notes": server.notes or ""}
+            "gpu_count": server.gpu_count, "enabled": server.enabled, "notes": server.notes or ""}
 
 
 def _render_server_edit(
@@ -466,7 +465,6 @@ async def _parse_server_form(
         "grafana_instance": str(form.get("grafana_instance", "")).strip(),
         "has_gpu": form.get("has_gpu") == "on",
         "gpu_count": str(form.get("gpu_count", "0")).strip() or "0",
-        "shareable": form.get("shareable") == "on",
         "enabled": form.get("enabled") == "on",
         "notes": str(form.get("notes", "")).strip(),
     }
@@ -492,11 +490,10 @@ async def _parse_server_form(
         gpu_count = 0
     elif not 1 <= gpu_count <= 64:
         errors.append("GPU count must be a whole number from 1 to 64 for a server with a GPU.")
-    shareable = values["shareable"] and values["kind"] != "standalone"
     fields = {
         "name": values["name"], "hostname": values["hostname"], "kind": values["kind"],
         "grafana_instance": values["grafana_instance"] or None, "has_gpu": values["has_gpu"],
-        "gpu_count": gpu_count, "shareable": shareable, "enabled": values["enabled"],
+        "gpu_count": gpu_count, "enabled": values["enabled"],
         "notes": values["notes"] or None,
     }
     return values, fields, errors
@@ -641,7 +638,7 @@ async def servers_import_page(
                      f"{MAX_IMPORT_ROWS} hosts; import them, then reload for the rest.")
     gpu_known = gpu_error is None
     rows = [{"instance": h.instance, "name": h.name, "gpu_count": h.gpu_count,
-             "shareable": False, "selected": False, "errors": [], "gpu_known": gpu_known}
+             "selected": False, "errors": [], "gpu_known": gpu_known}
             for h in hosts[:MAX_IMPORT_ROWS]]
     await _mark_existing(request, db, rows)
     gpu_note = None
@@ -702,7 +699,6 @@ def _import_rows(form) -> list[dict]:
             "instance": str(form.get(f"instance_{i}", "")).strip(),
             "name": str(form.get(f"name_{i}", "")).strip(),
             "gpu_count": str(form.get(f"gpu_count_{i}", "0")).strip() or "0",
-            "shareable": form.get(f"shareable_{i}") == "on",
             "selected": form.get(f"selected_{i}") == "on",
             "errors": [],
         })
@@ -728,8 +724,7 @@ async def servers_import(
         _, fields, errors = await _parse_server_form(db, {
             "name": r["name"], "hostname": r["instance"], "kind": "grafana",
             "grafana_instance": r["instance"], "has_gpu": "" if _is_zero(r["gpu_count"]) else "on",
-            "gpu_count": r["gpu_count"], "shareable": "on" if r["shareable"] else "",
-            "enabled": "on", "notes": "",
+            "gpu_count": r["gpu_count"], "enabled": "on", "notes": "",
         }, None)
         # Existing servers and rows accepted earlier in this batch (port/case/IP-aware).
         keys = machine_keys(r["instance"])
@@ -982,11 +977,8 @@ RULE_LABELS = {
     "idle_cpu_pct": "Idle: CPU below (%)",
     "idle_ram_delta_pp": "Idle: RAM change below (percentage points)",
     "max_idle_warnings": "Idle warnings before reclaim",
-    "share_threshold_pct": "Share threshold (%)",
-    "gpu_idle_util_pct": "Multi-GPU: idle GPU utilisation below (%)",
-    "gpu_idle_mem_pct": "Multi-GPU: idle GPU memory below (%)",
-    "share_avg_min": "Share averaging (minutes)",
-    "spike_avg_min": "Spike averaging (minutes)",
+    "spike_threshold_pct": "Shared machine: high-usage alert at (%)",
+    "spike_avg_min": "Shared machine: high-usage averaging (minutes)",
     "stale_after_min": "Metrics stale after (minutes)",
     "snapshot_retention_h": "Keep snapshots (hours)",
 }
@@ -995,7 +987,6 @@ RULE_MAX = {  # upper bounds keep timedelta arithmetic in the jobs from overflow
     "soon_window_min": 10080,
     "idle_window_min": 10080,
     "max_idle_warnings": 20,
-    "share_avg_min": 10080,
     "spike_avg_min": 10080,
     "stale_after_min": 10080,
     "snapshot_retention_h": 720,

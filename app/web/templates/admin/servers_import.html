@@ -20,7 +20,6 @@
 {% if gpu_note %}<div class="alert alert--warning">{{ gpu_note }}</div>{% endif %}
 <section class="card">
   <p>Tick the hosts to add. They are added as Grafana-monitored, enabled servers. The GPU count comes from Grafana's GPU metrics; correct it here if needed.</p>
-  <p class="muted small"><strong>Shareable</strong> allows a second booking while the current one uses less than half the machine (CPU, RAM and GPU, averaged over the last hour). Users are warned that resources are shared.</p>
 </section>
 {% if gpu_mismatches %}
 <section class="card">
@@ -34,7 +33,7 @@
 <form method="post" action="/admin/servers/import">
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th class="cell-center">Add</th><th>Name</th><th>Grafana instance</th><th>GPUs</th><th class="cell-center">Shareable</th><th><span class="visually-hidden">Notes</span></th></tr></thead>
+      <thead><tr><th class="cell-center">Add</th><th>Name</th><th>Grafana instance</th><th>GPUs</th><th><span class="visually-hidden">Notes</span></th></tr></thead>
       <tbody>
       {% for r in rows %}{% set i = loop.index0 %}
       <tr{% if r.exists %} class="is-muted"{% endif %}>
@@ -42,11 +41,10 @@
         <td><input name="name_{{ i }}" value="{{ r.name }}" aria-label="Name for {{ r.instance }}" {% if r.exists %}readonly{% endif %}></td>
         <td><input type="hidden" name="instance_{{ i }}" value="{{ r.instance }}"><code>{{ r.instance }}</code></td>
         <td>{% if r.existing_id %}<input type="hidden" name="gpu_count_{{ i }}" value="{{ r.gpu_count }}">{% if r.gpu_known %}Grafana: {{ r.gpu_count }} GPU{{ "" if r.gpu_count|string == "1" else "s" }} · configured: {{ r.configured_gpus }}{% if r.gpu_mismatch %} <span class="badge badge--warn">GPU count differs</span>{% endif %}{% else %}configured: {{ r.configured_gpus }}{% endif %}{% else %}<input type="number" name="gpu_count_{{ i }}" value="{{ r.gpu_count }}" min="0" max="64" aria-label="GPUs on {{ r.instance }}" {% if r.exists %}readonly{% endif %}>{% endif %}</td>
-        <td class="cell-center"><input type="checkbox" name="shareable_{{ i }}" aria-label="Shareable" {% if r.shareable %}checked{% endif %} {% if r.exists %}disabled{% endif %}></td>
         <td class="nowrap">{% if r.exists %}<span class="badge">Already added{% if r.existing %} as “{{ r.existing }}”{% endif %}</span>{% endif %}</td>
       </tr>
       {% for e in r.errors %}
-      <tr class="row-error"><td colspan="6"><p class="field__error" role="alert">{{ r.instance }}: {{ e }}</p></td></tr>
+      <tr class="row-error"><td colspan="5"><p class="field__error" role="alert">{{ r.instance }}: {{ e }}</p></td></tr>
       {% endfor %}
       {% endfor %}
       </tbody>

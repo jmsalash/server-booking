@@ -40,7 +40,7 @@
     <tr>
       <td class="nowrap"><strong>{{ server_name }}</strong>{% if server_deleted %} <span class="badge badge--danger">deleted</span>{% endif %}</td>
       <td class="nowrap">{{ user_name }}</td>
-      <td class="nowrap">{{ b.start_at|day_hm(tz) }} – {{ b.end_at|day_hm(tz) }}{% if b.is_shared %} <span class="badge badge--shared">shared</span>{% endif %}</td>
+      <td class="nowrap">{{ b.start_at|day_hm(tz) }} – {{ b.end_at|day_hm(tz) }}{% if b.is_shared %} <span class="badge badge--shared">shared</span>{% endif %}{% if b.shareable %} <span class="badge badge--shareable">shareable</span>{% endif %}</td>
       <td class="nowrap">{{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}</td>
       <td>{% set tone = {"active": "badge--ok", "cancelled": "badge--danger", "reclaimed": "badge--warn"} %}<span class="badge {{ tone.get(b.status, '') }}">{{ b.status }}</span>{% if b.cancel_reason %} <span class="muted">({{ b.cancel_reason }})</span>{% endif %}</td>
       <td>

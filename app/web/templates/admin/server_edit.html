@@ -33,7 +33,7 @@
     <div class="field-row">
       <div class="field">
         <label for="srv-kind">Type</label>
-        <select id="srv-kind" name="kind" onchange="var s=this.form.shareable; s.disabled=this.value==='standalone'; if(s.disabled) s.checked=false;">
+        <select id="srv-kind" name="kind">
           {% for k in kinds %}<option value="{{ k }}" {% if values.kind == k %}selected{% endif %}>{{ "Grafana-monitored" if k == "grafana" else "Standalone (not monitored)" }}</option>{% endfor %}
         </select>
       </div>
@@ -59,10 +59,6 @@
 
   <fieldset class="fieldset">
     <legend>Booking</legend>
-    <div class="check-field">
-      <label class="check"><input type="checkbox" name="shareable" aria-describedby="srv-share-help" {% if values.shareable %}checked{% endif %} {% if values.kind == "standalone" %}disabled{% endif %}> Shareable</label>
-      <p class="help" id="srv-share-help">Allow a second booking while the current one uses less than half the machine (CPU, RAM and GPU, averaged over the last hour). Users are warned that resources are shared. Grafana-monitored servers only.</p>
-    </div>
     <div class="check-field">
       <label class="check"><input type="checkbox" name="enabled" aria-describedby="srv-enabled-help" {% if values.enabled %}checked{% endif %}> Enabled</label>
       <p class="help" id="srv-enabled-help">Disabled servers can't be booked; existing bookings stay.</p>

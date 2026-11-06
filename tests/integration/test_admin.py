@@ -151,21 +151,21 @@ async def test_member_board_has_no_admin_link(client, logged_in_member):
 
 async def test_add_server(client, logged_in_admin, db):
     r = await client.post("/admin/servers/new", data={**SERVER_FORM, "has_gpu": "on",
-                                                      "gpu_count": "2", "shareable": "on"})
+                                                      "gpu_count": "2"})
     assert r.status_code == 303 and r.headers["location"] == "/admin/servers"
     s = await db.scalar(select(Server).where(Server.name == "cpu-07"))
-    assert (s.kind, s.has_gpu, s.gpu_count, s.shareable, s.enabled, s.grafana_instance) == (
-        "grafana", True, 2, True, True, None)
+    assert (s.kind, s.has_gpu, s.gpu_count, s.enabled, s.grafana_instance) == (
+        "grafana", True, 2, True, None)
 
 
-async def test_standalone_server_cannot_be_shareable(client, logged_in_admin, db):
-    r = await client.post("/admin/servers/new", data={**SERVER_FORM, "kind": "standalone",
-                                                      "shareable": "on"})
+async def test_server_form_has_no_shareable_flag(client, logged_in_admin, db):
+    # Sharing is chosen per booking by the booker; a stray old form field is ignored.
+    r = await client.post("/admin/servers/new", data={**SERVER_FORM, "shareable": "on"})
     assert r.status_code == 303
     s = await db.scalar(select(Server).where(Server.name == "cpu-07"))
-    assert s.shareable is False
     page = await client.get(f"/admin/servers/{s.id}")
-    assert 'name="shareable"' in page.text and "disabled" in page.text
+    assert 'name="shareable"' not in page.text
+    assert "Shareable" not in (await client.get("/admin/servers")).text
 
 
 async def test_gpu_count_zero_without_gpu(client, logged_in_admin, db):
@@ -268,13 +268,11 @@ def _discovered(grafana, gpu=None):
         Series({"instance": "gpu-01:9835"}, 4)]
 
 
-def _import_row(i, instance, name=None, gpu_count="0", selected=True, shareable=False):
+def _import_row(i, instance, name=None, gpu_count="0", selected=True):
     row = {f"instance_{i}": instance, f"name_{i}": instance if name is None else name,
            f"gpu_count_{i}": gpu_count}
     if selected:
         row[f"selected_{i}"] = "on"
-    if shareable:
-        row[f"shareable_{i}"] = "on"
     return row
 
 
@@ -337,7 +335,7 @@ async def test_import_page_not_configured_hint(client, logged_in_admin, grafana)
 
 async def test_import_creates_ticked_servers(client, logged_in_admin, db, store, grafana):
     form = {**_import_row(0, "cpu-02", "CPU two"),
-            **_import_row(1, "gpu-01.lab", "gpu-01", "4", shareable=True),
+            **_import_row(1, "gpu-01.lab", "gpu-01", "4"),
             **_import_row(2, "old-03", selected=False)}
     r = await client.post("/admin/servers/import", data=form)
     assert r.status_code == 303 and r.headers["location"].startswith("/admin/servers")
@@ -345,10 +343,10 @@ async def test_import_creates_ticked_servers(client, logged_in_admin, db, store,
     rows = {s.name: s for s in (await db.scalars(select(Server))).all()}
     assert set(rows) == {"CPU two", "gpu-01"}
     g = rows["gpu-01"]
-    assert (g.kind, g.grafana_instance, g.hostname, g.has_gpu, g.gpu_count, g.shareable,
-            g.enabled) == ("grafana", "gpu-01.lab", "gpu-01.lab", True, 4, True, True)
+    assert (g.kind, g.grafana_instance, g.hostname, g.has_gpu, g.gpu_count,
+            g.enabled) == ("grafana", "gpu-01.lab", "gpu-01.lab", True, 4, True)
     c = rows["CPU two"]
-    assert (c.has_gpu, c.gpu_count, c.shareable) == (False, 0, False)
+    assert (c.has_gpu, c.gpu_count) == (False, 0)
     entry = await db.scalar(select(AuditLog).where(AuditLog.action == "admin.servers_import"))
     assert entry.details["names"] == ["CPU two", "gpu-01"]
     page = await client.get(r.headers["location"])
@@ -898,11 +896,10 @@ async def test_server_form_checkboxes_have_visible_labels(client, logged_in_admi
     parser = _CheckboxLabels()
     parser.feed((await client.get(path)).text)
     labels = {name: label for name, label in parser.found}
-    assert set(labels) == {"has_gpu", "shareable", "enabled"}
+    assert set(labels) == {"has_gpu", "enabled"}
     for name, label in labels.items():
         assert label is not None, f"checkbox {name} is not inside a <label>"
         assert label["text"].strip(), f"checkbox {name} has no visible label text"
-    assert labels["shareable"]["text"].strip() == "Shareable"
     assert labels["enabled"]["text"].strip() == "Enabled"
     assert labels["has_gpu"]["text"].strip() == "Has GPU"
 
