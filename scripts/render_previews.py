@@ -99,6 +99,11 @@ async def seed(db, store) -> dict:
         "legacy-06": Server(name="legacy-06", hostname="legacy-06.lab", kind="standalone"),
         "old-07": Server(name="old-07", hostname="old-07.lab", kind="grafana", enabled=False,
                          notes="Waiting for a new PSU."),
+        # Grafana reports 2 GPUs: the import page offers to update the count.
+        "gpu-08": Server(name="gpu-08", hostname="gpu-08.lab", kind="grafana", has_gpu=True,
+                         gpu_count=1),
+        "retired-09": Server(name="retired-09", hostname="retired-09.lab", kind="standalone",
+                             enabled=False, archived_at=NOW - timedelta(days=3)),
     }
     db.add_all(s.values())
     await db.flush()
@@ -129,6 +134,9 @@ async def seed(db, store) -> dict:
                 end_at=hour - 40 * h, resource="cpu_gpu", status="reclaimed"),
         Booking(user_id=u["Ana Rossi"].id, server_id=s["gpu-02"].id, start_at=hour - 80 * h,
                 end_at=hour - 70 * h, resource="cpu_gpu", status="completed"),
+        Booking(user_id=u["Bob Bianchi"].id, server_id=s["retired-09"].id,
+                start_at=hour - 120 * h, end_at=hour - 110 * h, resource="cpu",
+                status="completed"),
     ]
     db.add_all(bookings)
     for name, args in (
@@ -210,6 +218,10 @@ async def render(out: Path) -> list[str]:
                 "integrations": "/admin/integrations", "rules": "/admin/rules",
                 "bookings": "/admin/bookings", "health": "/admin/health", "audit": "/admin/audit",
                 "setup_grafana": "/admin/setup/grafana", "setup_bind": "/admin/setup/bind",
+                "servers_deleted": "/admin/servers?deleted=1",
+                "server_delete": f"/admin/servers/{ids['gpu-01']}/delete",
+                "server_purge": f"/admin/servers/{ids['retired-09']}/purge",
+                "bookings_deleted": "/admin/bookings?deleted=1",
             }
             written = []
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as anon:
