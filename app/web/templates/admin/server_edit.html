@@ -83,4 +83,13 @@
     <a class="btn" href="/admin/servers">Cancel</a>
   </div>
 </form>
+{% if server_id %}
+<section class="card mt-5" aria-labelledby="danger-zone">
+  <div class="card__head">
+    <h2 id="danger-zone">Delete server</h2>
+  </div>
+  <p>Hides the server from the board, booking and the bot, and cancels its upcoming and running bookings (their owners are notified). Past bookings and usage history are kept; you can restore it or erase it later from the deleted servers list.</p>
+  <a class="btn btn--danger" href="/admin/servers/{{ server_id }}/delete">Delete server…</a>
+</section>
+{% endif %}
 {% endblock %}

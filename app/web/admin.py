@@ -22,7 +22,7 @@ from app.integrations.grafana import (
 )
 from app.jobs.metrics import HEALTH_KEY
 from app.models import AuditLog, Booking, OutboxItem, Server, TelegramTopic, User
-from app.services import audit, board, booking, inventory
+from app.services import audit, board, booking, inventory, server_archive
 from app.services.machine_identity import MachineIndex, machine_keys
 from app.settings_store import K, SettingsStore
 from app.web.deps import current_user, get_db, get_store, require_admin, templates
@@ -420,11 +420,16 @@ async def _grafana_ready(store: SettingsStore) -> bool:
 
 async def _render_servers(
     request: Request, db: AsyncSession, store: SettingsStore, user: User, status: int = 200,
-    notice: str | None = None, fetched: dict | None = None,
+    notice: str | None = None, fetched: dict | None = None, show_deleted: bool = False,
+    error: str | None = None,
 ) -> HTMLResponse:
+    archived = await inventory.list_archived(db)
     return render(request, "admin/servers.html", {
         "user": user, "section": "servers", "servers": await inventory.list_servers(db),
         "notice": notice, "fetched": fetched, "grafana_ready": await _grafana_ready(store),
+        "archived": archived if show_deleted else [], "archived_count": len(archived),
+        "show_deleted": show_deleted, "error": error,
+        "tz": (await store.get_rules()).timezone,
     }, status)
 
 
@@ -468,7 +473,8 @@ async def _parse_server_form(
     if not values["name"]:
         errors.append("Enter a name.")
     else:
-        q = select(Server.id).where(func.lower(Server.name) == values["name"].lower())
+        q = select(Server.id).where(func.lower(Server.name) == values["name"].lower(),
+                                    Server.archived_at.is_(None))
         if server_id is not None:
             q = q.where(Server.id != server_id)
         if await db.scalar(q) is not None:
@@ -501,11 +507,23 @@ async def servers_page(
     db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
 ):
     notice = None
-    raw = request.query_params.get("added", "")
+    params = request.query_params
+    raw = params.get("added", "")
     if raw.isascii() and raw.isdigit() and 0 <= int(raw) <= MAX_IMPORT_ROWS:
         added = int(raw)
         notice = f"Added {added} server{'' if added == 1 else 's'}."
-    return await _render_servers(request, db, store, user, notice=notice)
+    if (sid := _opt_int(params.get("deleted_id"))) is not None:
+        server = await db.get(Server, sid)
+        if server is not None and server.archived_at is not None:
+            notice = f"Deleted {server.name}. Its booking history is kept."
+    if (sid := _opt_int(params.get("restored_id"))) is not None:
+        server = await db.get(Server, sid)
+        if server is not None and server.archived_at is None:
+            notice = f"Restored {server.name}. It is disabled — edit it to enable bookings."
+    if params.get("purged") == "1":
+        notice = "Server permanently deleted."
+    return await _render_servers(request, db, store, user, notice=notice,
+                                 show_deleted=params.get("deleted") == "1")
 
 
 # --- same-machine check (manual form and import) --------------------------------------------
@@ -701,9 +719,7 @@ async def server_edit_page(
     request: Request, server_id: int, user: User = Depends(admin_gate),
     db: AsyncSession = Depends(get_db),
 ):
-    server = await db.get(Server, check_id(server_id))
-    if server is None:
-        raise LookupError(f"server {server_id} not found")
+    server = await inventory.get_live(db, check_id(server_id))
     return _render_server_edit(request, user, server.id, _server_values(server))
 
 
@@ -712,9 +728,7 @@ async def server_update(
     request: Request, server_id: int, user: User = Depends(admin_gate),
     db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
 ):
-    server = await db.get(Server, check_id(server_id))
-    if server is None:
-        raise LookupError(f"server {server_id} not found")
+    server = await inventory.get_live(db, check_id(server_id))
     values, fields, errors = await _parse_server_form(db, await request.form(), server.id)
     await _check_same_machine(request, db, fields, errors, server)
     if errors:
@@ -747,9 +761,7 @@ async def server_fetch(
     request: Request, server_id: int, user: User = Depends(admin_gate),
     db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
 ):
-    server = await db.get(Server, check_id(server_id))
-    if server is None:
-        raise LookupError(f"server {server_id} not found")
+    server = await inventory.get_live(db, check_id(server_id))
     url = await store.get(K.GRAFANA_URL)
     ds_uid = await store.get(K.GRAFANA_DS_UID)
     password = await store.get(K.GRAFANA_PASSWORD)
@@ -779,6 +791,112 @@ async def server_fetch(
     await db.commit()
     return await _render_servers(request, db, store, user,
                                  fetched={"server_id": server.id, "ok": ok, "text": text})
+
+
+# --- delete (archive), restore, delete permanently ------------------------------------------
+
+
+async def _archived(db: AsyncSession, server_id: int) -> Server:
+    server = await db.get(Server, check_id(server_id))
+    if server is None or server.archived_at is None:
+        raise LookupError(f"deleted server {server_id} not found")
+    return server
+
+
+@router.get("/servers/{server_id}/delete")
+async def server_delete_page(
+    request: Request, server_id: int, user: User = Depends(admin_gate),
+    db: AsyncSession = Depends(get_db),
+):
+    server = await inventory.get_live(db, check_id(server_id))
+    return render(request, "admin/server_delete.html", {
+        "user": user, "section": "servers", "server": server, "permanent": False,
+        "upcoming": await server_archive.count_upcoming(db, server.id, clock.utcnow()),
+    })
+
+
+@router.post("/servers/{server_id}/delete")
+async def server_delete(
+    request: Request, server_id: int, user: User = Depends(admin_gate),
+    db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
+):
+    server = await inventory.get_live(db, check_id(server_id))
+    name = server.name
+    cancelled = await server_archive.archive(db, store, server.id, user, clock.utcnow())
+    await record(db, user, "server_delete", f"server:{server.id}",
+                 {"name": name, "cancelled_bookings": cancelled})
+    await db.commit()
+    return redirect(f"/admin/servers?deleted_id={server.id}")
+
+
+async def _restore_conflict(request: Request, db: AsyncSession, server: Server) -> str | None:
+    """Why the server cannot come back: a live server has its name or is the same machine."""
+    taken = await db.scalar(select(Server.name).where(
+        func.lower(Server.name) == server.name.lower(), Server.archived_at.is_(None)))
+    if taken is not None:
+        return (f"Cannot restore {server.name}: a server named “{taken}” already exists. "
+                "Rename or delete that server first.")
+    errors: list[str] = []
+    fields = {"hostname": server.hostname, "grafana_instance": server.grafana_instance}
+    await _check_same_machine(request, db, fields, errors, None)  # live servers only
+    if errors:
+        return f"Cannot restore {server.name}: {errors[0]}"
+    return None
+
+
+@router.post("/servers/{server_id}/restore")
+async def server_restore(
+    request: Request, server_id: int, user: User = Depends(admin_gate),
+    db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
+):
+    server = await _archived(db, server_id)
+    error = await _restore_conflict(request, db, server)
+    if error is None:
+        try:
+            async with db.begin_nested():
+                await server_archive.restore(db, server.id)
+        except IntegrityError:  # a server with the same name was added meanwhile
+            await db.refresh(server)
+            error = f"Cannot restore {server.name}: a server with that name already exists."
+    if error is not None:
+        return await _render_servers(request, db, store, user, 409, show_deleted=True,
+                                     error=error)
+    await record(db, user, "server_restore", f"server:{server.id}", {"name": server.name})
+    await db.commit()
+    return redirect(f"/admin/servers?restored_id={server.id}")
+
+
+@router.get("/servers/{server_id}/purge")
+async def server_purge_page(
+    request: Request, server_id: int, user: User = Depends(admin_gate),
+    db: AsyncSession = Depends(get_db),
+):
+    server = await _archived(db, server_id)
+    return render(request, "admin/server_delete.html", {
+        "user": user, "section": "servers", "server": server, "permanent": True,
+        "counts": await server_archive.purge_counts(db, server.id),
+    })
+
+
+@router.post("/servers/{server_id}/purge")
+async def server_purge(
+    request: Request, server_id: int, user: User = Depends(admin_gate),
+    db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
+):
+    server = await _archived(db, server_id)
+    sid = server.id
+    try:
+        name, counts = await server_archive.purge(db, sid)
+    except server_archive.CalendarCleanupPending:  # raised before anything was written
+        return await _render_servers(
+            request, db, store, user, 409, show_deleted=True,
+            error=f"{server.name} cannot be erased yet: its Calendar events are still being "
+                  "removed. Try again in a minute (see Health if this persists).")
+    await record(db, user, "server_purge", f"server:{sid}", {
+        "name": name, "bookings": counts.bookings, "snapshots": counts.snapshots,
+        "subscriptions": counts.subscriptions})
+    await db.commit()
+    return redirect("/admin/servers?deleted=1&purged=1")
 
 
 # --- rules ----------------------------------------------------------------------------------
@@ -907,13 +1025,16 @@ async def rules_save(
 @router.get("/bookings")
 async def bookings_page(
     request: Request, server_id: str | None = None, user_id: str | None = None,
-    status: str | None = None, user: User = Depends(admin_gate),
+    status: str | None = None, deleted: str | None = None, user: User = Depends(admin_gate),
     db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
 ):
     sid, uid = _opt_int(server_id), _opt_int(user_id)
     st = status if status in STATUSES else None
-    q = (select(Booking, User.display_name, Server.name)
+    show_deleted = deleted == "1"
+    q = (select(Booking, User.display_name, Server.name, Server.archived_at.is_not(None))
          .join(User, User.id == Booking.user_id).join(Server, Server.id == Booking.server_id))
+    if not show_deleted:
+        q = q.where(Server.archived_at.is_(None))
     if sid is not None:
         q = q.where(Booking.server_id == sid)
     if uid is not None:
@@ -926,9 +1047,12 @@ async def bookings_page(
     rules = await store.get_rules()
     return render(request, "admin/bookings.html", {
         "user": user, "section": "bookings", "rows": rows, "now": clock.utcnow(),
-        "tz": rules.timezone, "servers": await inventory.list_servers(db),
+        "tz": rules.timezone,
+        "servers": await inventory.list_servers(db)
+        + (await inventory.list_archived(db) if show_deleted else []),
         "users": (await db.scalars(select(User).order_by(User.display_name))).all(),
-        "statuses": STATUSES, "filters": {"server_id": sid, "user_id": uid, "status": st},
+        "statuses": STATUSES,
+        "filters": {"server_id": sid, "user_id": uid, "status": st, "deleted": show_deleted},
     })
 
 

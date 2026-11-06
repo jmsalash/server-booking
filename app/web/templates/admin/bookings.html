@@ -11,7 +11,7 @@
   <div class="field">
     <label for="f-server">Server</label>
     <select id="f-server" name="server_id"><option value="">All</option>
-      {% for s in servers %}<option value="{{ s.id }}" {% if filters.server_id == s.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+      {% for s in servers %}<option value="{{ s.id }}" {% if filters.server_id == s.id %}selected{% endif %}>{{ s.name }}{% if s.archived_at %} (deleted){% endif %}</option>{% endfor %}
     </select>
   </div>
   <div class="field">
@@ -26,6 +26,9 @@
       {% for st in statuses %}<option value="{{ st }}" {% if filters.status == st %}selected{% endif %}>{{ st }}</option>{% endfor %}
     </select>
   </div>
+  <div class="check-field">
+    <label class="check"><input type="checkbox" name="deleted" value="1" {% if filters.deleted %}checked{% endif %}> Include deleted servers</label>
+  </div>
   <button type="submit" class="btn">Filter</button>
 </form>
 {% if rows %}
@@ -33,9 +36,9 @@
   <table class="table">
     <thead><tr><th>Server</th><th>User</th><th>When ({{ tz }})</th><th>Resources</th><th>Status</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
     <tbody>
-    {% for b, user_name, server_name in rows %}
+    {% for b, user_name, server_name, server_deleted in rows %}
     <tr>
-      <td class="nowrap"><strong>{{ server_name }}</strong></td>
+      <td class="nowrap"><strong>{{ server_name }}</strong>{% if server_deleted %} <span class="badge badge--danger">deleted</span>{% endif %}</td>
       <td class="nowrap">{{ user_name }}</td>
       <td class="nowrap">{{ b.start_at|day_hm(tz) }} – {{ b.end_at|day_hm(tz) }}{% if b.is_shared %} <span class="badge badge--shared">shared</span>{% endif %}</td>
       <td class="nowrap">{{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}</td>

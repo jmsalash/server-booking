@@ -902,3 +902,228 @@ async def test_server_form_checkboxes_have_visible_labels(client, logged_in_admi
     assert labels["shareable"]["text"].strip() == "Shareable"
     assert labels["enabled"]["text"].strip() == "Enabled"
     assert labels["has_gpu"]["text"].strip() == "Has GPU"
+
+
+# --- delete (archive) / restore / delete permanently ----------------------------------------
+
+
+async def _seed_history(db, make_user, server):
+    """A past, a running and a future booking, plus a snapshot and a watch subscription."""
+    from app.models import MetricSnapshot, WatchSubscription
+
+    owner = await make_user(display_name="Bea")
+    past = Booking(user_id=owner.id, server_id=server.id, start_at=NOW - timedelta(days=1),
+                   end_at=NOW - timedelta(hours=20), resource="cpu", status="completed")
+    running = Booking(user_id=owner.id, server_id=server.id, start_at=NOW - timedelta(hours=1),
+                      end_at=NOW + timedelta(hours=2), resource="cpu", calendar_event_id="ev1")
+    future = Booking(user_id=owner.id, server_id=server.id, start_at=NOW + timedelta(days=2),
+                     end_at=NOW + timedelta(days=2, hours=3), resource="cpu",
+                     calendar_event_id="ev2")
+    db.add_all([past, running, future,
+                MetricSnapshot(server_id=server.id, ts=NOW, cpu_pct=1.0, ram_pct=2.0),
+                WatchSubscription(user_id=owner.id, server_id=server.id, created_at=NOW)])
+    await db.flush()
+    return owner, past, running, future
+
+
+async def test_delete_server_confirm_page_counts_upcoming(client, logged_in_admin, db,
+                                                          make_user, make_server):
+    s = await make_server(name="gpu-05")
+    await _seed_history(db, make_user, s)
+    await db.commit()
+    r = await client.get(f"/admin/servers/{s.id}")
+    assert f'href="/admin/servers/{s.id}/delete"' in r.text
+    r = await client.get(f"/admin/servers/{s.id}/delete")
+    assert r.status_code == 200
+    assert "2 upcoming or running bookings will be cancelled" in r.text
+    assert f'action="/admin/servers/{s.id}/delete"' in r.text
+
+
+async def test_delete_server_archives_and_cancels_future_bookings(
+        client, logged_in_admin, db, store, make_user, make_server):
+    from app.models import MetricSnapshot, WatchSubscription
+
+    s = await make_server(name="gpu-05", kind="grafana")
+    owner, past, running, future = await _seed_history(db, make_user, s)
+    await store.set(K.GCAL_CALENDAR_ID, "cal@x")
+    ids = (s.id, past.id, running.id, future.id)
+    await db.commit()
+    r = await client.post(f"/admin/servers/{s.id}/delete")
+    assert r.status_code == 303 and r.headers["location"] == f"/admin/servers?deleted_id={s.id}"
+    db.expire_all()
+    server = await db.get(Server, ids[0])
+    assert server.archived_at == NOW and server.enabled is False
+    assert (await db.get(Booking, ids[1])).status == "completed"  # history untouched
+    for bid in ids[2:]:
+        b = await db.get(Booking, bid)
+        assert b.status == "cancelled" and b.cancelled_at == NOW
+    items = (await db.scalars(select(OutboxItem).order_by(OutboxItem.id))).all()
+    deletes = sorted(i.payload["booking_id"] for i in items if i.kind == "calendar_delete")
+    assert deletes == sorted(ids[2:])
+    dms = [i.payload["text"] for i in items if i.kind == "telegram_message"]
+    assert len(dms) == 2 and all("gpu-05" in t and "cancelled by an admin" in t for t in dms)
+    assert (await db.scalars(select(WatchSubscription))).all() == []
+    assert len((await db.scalars(select(MetricSnapshot))).all()) == 1
+    assert "admin.server_delete" in await _actions(db)
+    # hidden from the live lists
+    page = await client.get("/admin/servers?deleted_id=%d" % ids[0])
+    assert "Deleted gpu-05" in page.text and "Show deleted servers (1)" in page.text
+    assert f'href="/admin/servers/{ids[0]}"' not in page.text
+    board_page = await client.get("/")
+    assert "gpu-05" not in board_page.text
+    assert "gpu-05" not in (await client.get("/book")).text
+    assert (await client.get(f"/admin/servers/{ids[0]}")).status_code == 404
+    assert (await client.post(f"/admin/servers/{ids[0]}/delete")).status_code == 404
+    assert (await client.post(f"/watch/{ids[0]}")).status_code == 404
+
+
+async def test_deleted_server_cannot_be_booked(client, logged_in_admin, db, make_server):
+    s = await make_server(name="gone", archived_at=NOW, enabled=True)
+    await db.commit()
+    r = await client.post("/book", data={"server_id": str(s.id), "start": "2026-11-06T10:00",
+                                         "end": "2026-11-06T11:00", "resource": "cpu"})
+    assert r.status_code == 400
+    db.expire_all()
+    assert (await db.scalars(select(Booking))).all() == []
+
+
+async def test_name_reusable_after_delete(client, logged_in_admin, db, make_server):
+    s = await make_server(name="cpu-07", hostname="old-07.lab")
+    await db.commit()
+    await client.post(f"/admin/servers/{s.id}/delete")
+    r = await client.post("/admin/servers/new", data=SERVER_FORM)  # name cpu-07 again
+    assert r.status_code == 303
+    db.expire_all()
+    names = (await db.scalars(select(Server.name).where(Server.archived_at.is_(None)))).all()
+    assert names == ["cpu-07"]
+
+
+async def test_deleted_servers_list_toggle(client, logged_in_admin, db, make_server):
+    await make_server(name="live-1")
+    gone = await make_server(name="gone-1", archived_at=NOW, enabled=False)
+    await db.commit()
+    r = await client.get("/admin/servers")
+    assert "live-1" in r.text and "gone-1" not in r.text
+    assert 'href="/admin/servers?deleted=1"' in r.text and "Show deleted servers (1)" in r.text
+    r = await client.get("/admin/servers", params={"deleted": "1"})
+    assert "gone-1" in r.text and "Deleted 5 Nov 2026" in r.text
+    assert f'action="/admin/servers/{gone.id}/restore"' in r.text
+    assert f'href="/admin/servers/{gone.id}/purge"' in r.text
+    assert "Hide deleted servers" in r.text
+
+
+async def test_restore_server(client, logged_in_admin, db, make_server):
+    s = await make_server(name="gone-1", archived_at=NOW, enabled=False)
+    sid = s.id
+    await db.commit()
+    r = await client.post(f"/admin/servers/{sid}/restore")
+    assert r.status_code == 303 and r.headers["location"] == f"/admin/servers?restored_id={sid}"
+    db.expire_all()
+    s = await db.get(Server, sid)
+    assert s.archived_at is None and s.enabled is False
+    assert "admin.server_restore" in await _actions(db)
+    assert "Restored gone-1" in (await client.get(r.headers["location"])).text
+    # only deleted servers can be restored or purged
+    assert (await client.post(f"/admin/servers/{sid}/restore")).status_code == 404
+    assert (await client.get(f"/admin/servers/{sid}/purge")).status_code == 404
+    assert (await client.post(f"/admin/servers/{sid}/purge")).status_code == 404
+
+
+async def test_restore_refused_when_name_taken(client, logged_in_admin, db, make_server):
+    gone = await make_server(name="cpu-07", hostname="a.lab", archived_at=NOW, enabled=False)
+    await make_server(name="CPU-07", hostname="b.lab")
+    gid = gone.id
+    await db.commit()
+    r = await client.post(f"/admin/servers/{gone.id}/restore")
+    assert r.status_code == 409
+    assert "Cannot restore cpu-07" in r.text and "already exists" in r.text
+    db.expire_all()
+    assert (await db.get(Server, gid)).archived_at == NOW
+
+
+async def test_restore_refused_when_same_machine(client, logged_in_admin, db, make_server, dns):
+    gone = await make_server(name="old", hostname="box.lab", archived_at=NOW, enabled=False)
+    await make_server(name="new", hostname="box.lab")
+    gid = gone.id
+    await db.commit()
+    r = await client.post(f"/admin/servers/{gone.id}/restore")
+    assert r.status_code == 409 and "already exists as &#34;new&#34;" in r.text
+    db.expire_all()
+    assert (await db.get(Server, gid)).archived_at == NOW
+
+
+async def test_deleted_server_not_a_duplicate(client, logged_in_admin, db, store, make_server,
+                                              grafana, dns):
+    await make_server(name="legacy", kind="grafana", grafana_instance="old-03:9100",
+                      archived_at=NOW, enabled=False)
+    await _configure_grafana(db, store)
+    _discovered(grafana)
+    r = await client.get("/admin/servers/import")
+    assert "Already added" not in r.text
+    r = await client.post("/admin/servers/new", data={**SERVER_FORM, "name": "legacy",
+                                                      "hostname": "old-03"})
+    assert r.status_code == 303
+
+
+async def test_purge_server_removes_children(client, logged_in_admin, db, make_user,
+                                             make_server):
+    from app.models import MetricSnapshot, WatchSubscription
+
+    s = await make_server(name="gpu-05")
+    await _seed_history(db, make_user, s)
+    other = await make_server(name="keep")
+    db.add(MetricSnapshot(server_id=other.id, ts=NOW, cpu_pct=1.0, ram_pct=1.0))
+    sid, other_id = s.id, other.id
+    await db.commit()
+    assert (await client.get(f"/admin/servers/{sid}/purge")).status_code == 404  # live
+    await client.post(f"/admin/servers/{sid}/delete")
+    r = await client.get(f"/admin/servers/{sid}/purge")
+    assert r.status_code == 200
+    assert "3 bookings" in r.text and "1 usage snapshot" in r.text
+    assert "0 watchlist subscriptions" in r.text and "cannot be undone" in r.text
+    r = await client.post(f"/admin/servers/{sid}/purge")
+    assert r.status_code == 303 and "purged=1" in r.headers["location"]
+    db.expire_all()
+    assert await db.get(Server, sid) is None
+    assert (await db.scalars(select(Booking).where(Booking.server_id == sid))).all() == []
+    assert (await db.scalars(select(MetricSnapshot.server_id))).all() == [other_id]
+    assert (await db.scalars(select(WatchSubscription))).all() == []
+    entry = await db.scalar(select(AuditLog).where(AuditLog.action == "admin.server_purge"))
+    assert entry.details["name"] == "gpu-05" and entry.details["bookings"] == 3
+    assert "permanently deleted" in (await client.get(r.headers["location"])).text
+
+
+async def test_purge_waits_for_pending_calendar_deletes(client, logged_in_admin, db, store,
+                                                        make_user, make_server):
+    s = await make_server(name="gpu-05")
+    await _seed_history(db, make_user, s)
+    await store.set(K.GCAL_CALENDAR_ID, "cal@x")
+    sid = s.id
+    await db.commit()
+    await client.post(f"/admin/servers/{sid}/delete")  # queues calendar deletes
+    r = await client.post(f"/admin/servers/{sid}/purge")
+    assert r.status_code == 409 and "Calendar events are still being removed" in r.text
+    db.expire_all()
+    assert await db.get(Server, sid) is not None
+    from sqlalchemy import update
+    await db.execute(update(OutboxItem).values(done_at=NOW))
+    await db.commit()
+    assert (await client.post(f"/admin/servers/{sid}/purge")).status_code == 303
+
+
+async def test_bookings_of_deleted_servers_hidden_by_default(client, logged_in_admin, db,
+                                                             make_user, make_server):
+    u = await make_user(display_name="Cleo")
+    live = await make_server(name="live-1")
+    gone = await make_server(name="gone-1", archived_at=NOW, enabled=False)
+    for s in (live, gone):
+        db.add(Booking(user_id=u.id, server_id=s.id, start_at=NOW - timedelta(days=2),
+                       end_at=NOW - timedelta(days=2) + timedelta(hours=1), resource="cpu",
+                       status="completed"))
+    await db.commit()
+    r = await client.get("/admin/bookings")
+    assert "live-1" in r.text and "gone-1" not in r.text
+    assert 'name="deleted"' in r.text and "Include deleted servers" in r.text
+    r = await client.get("/admin/bookings", params={"deleted": "1"})
+    assert "gone-1" in r.text and '<span class="badge badge--danger">deleted</span>' in r.text
+    assert "gone-1 (deleted)" in r.text  # in the server filter

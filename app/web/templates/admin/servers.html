@@ -12,6 +12,7 @@
   </div>
 </div>
 {% if notice %}<div class="alert alert--success" role="status">{{ notice }}</div>{% endif %}
+{% if error %}<div class="alert alert--danger" role="alert">{{ error }}</div>{% endif %}
 {% if not grafana_ready %}<div class="alert alert--info">To import servers from Grafana, configure it on the <a href="/admin/integrations">Integrations</a> page.</div>{% endif %}
 {% if servers %}
 <div class="table-wrap">
@@ -44,5 +45,39 @@
 </div>
 {% else %}
 <div class="empty"><p class="empty__title">No servers yet</p><p>Add one by hand{% if grafana_ready %} or import them from Grafana{% endif %}.</p></div>
+{% endif %}
+{% if archived_count %}
+<div class="actions mt-2">
+  {% if show_deleted %}<a class="btn btn--sm" href="/admin/servers">Hide deleted servers</a>{% else %}<a class="btn btn--sm" href="/admin/servers?deleted=1">Show deleted servers ({{ archived_count }})</a>{% endif %}
+</div>
+{% endif %}
+{% if show_deleted and archived %}
+<section class="mt-2" aria-labelledby="deleted-servers">
+  <h2 id="deleted-servers">Deleted servers</h2>
+  <p class="muted small">Hidden from the board, booking and the bot; their booking history is kept. Restored servers come back disabled.</p>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Name</th><th>Hostname</th><th>Monitoring</th><th>GPUs</th><th>Deleted</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+      <tbody>
+      {% for s in archived %}
+      <tr class="is-muted">
+        <td><strong>{{ s.name }}</strong></td>
+        <td><code>{{ s.hostname }}</code></td>
+        <td>{% if s.kind == "grafana" %}Grafana{% if s.grafana_instance %} ({{ s.grafana_instance }}){% endif %}{% else %}standalone{% endif %}</td>
+        <td class="num">{{ s.gpu_count if s.has_gpu else "—" }}</td>
+        <td class="nowrap"><span class="badge badge--danger">Deleted {{ s.archived_at|day_date(tz) }}</span></td>
+        <td class="nowrap">
+          <div class="actions actions--end">
+            <a class="btn btn--sm" href="/admin/bookings?server_id={{ s.id }}&amp;deleted=1">Bookings</a>
+            <form method="post" action="/admin/servers/{{ s.id }}/restore" class="inline"><button type="submit" class="btn btn--sm">Restore</button></form>
+            <a class="btn btn--danger btn--sm" href="/admin/servers/{{ s.id }}/purge">Delete permanently</a>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endif %}
 {% endblock %}

@@ -1,0 +1,33 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ "Delete permanently" if permanent else "Delete" }} {{ server.name }} — Admin{% endblock %}
+{% block admin_content %}
+<div class="page-head">
+  <div>
+    <p class="crumb"><a href="{{ '/admin/servers?deleted=1' if permanent else '/admin/servers/%d' % server.id }}">← {{ "Deleted servers" if permanent else server.name }}</a></p>
+    <h1>{{ "Delete " ~ server.name ~ " permanently?" if permanent else "Delete " ~ server.name ~ "?" }}</h1>
+  </div>
+</div>
+<section class="card">
+  {% if permanent %}
+  <div class="alert alert--danger" role="alert">This cannot be undone.</div>
+  <p>Erases <strong>{{ server.name }}</strong> and everything recorded for it:</p>
+  <ul>
+    <li>{{ counts.bookings }} booking{{ "" if counts.bookings == 1 else "s" }} (the whole booking history)</li>
+    <li>{{ counts.snapshots }} usage snapshot{{ "" if counts.snapshots == 1 else "s" }}</li>
+    <li>{{ counts.subscriptions }} watchlist subscription{{ "" if counts.subscriptions == 1 else "s" }}</li>
+  </ul>
+  <p class="muted small">The audit log keeps a record of the deletion with the server's name.</p>
+  {% else %}
+  {% if upcoming %}
+  <div class="alert alert--warning">{{ upcoming }} upcoming or running booking{{ " will be" if upcoming == 1 else "s will be" }} cancelled. Their owners get a Telegram message and the Calendar events are removed.</div>
+  {% else %}
+  <p>No upcoming or running bookings will be affected.</p>
+  {% endif %}
+  <p><strong>{{ server.name }}</strong> disappears from the board, the booking form and the bot, and its watchlist is cleared. Past bookings and usage history are kept: you can restore the server or delete it permanently from the deleted servers list on the Servers page.</p>
+  {% endif %}
+  <form method="post" action="/admin/servers/{{ server.id }}/{{ 'purge' if permanent else 'delete' }}" class="form-actions">
+    <button type="submit" class="btn btn--danger">{{ "Delete permanently" if permanent else "Delete server" }}</button>
+    <a class="btn" href="{{ '/admin/servers?deleted=1' if permanent else '/admin/servers/%d' % server.id }}">Cancel</a>
+  </form>
+</section>
+{% endblock %}

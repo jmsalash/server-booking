@@ -23,6 +23,11 @@ templates.env.filters["day_hm"] = format_day_hm
 templates.env.filters["local_input"] = (
     lambda dt, tz: dt.astimezone(ZoneInfo(tz)).strftime("%Y-%m-%dT%H:%M")
 )
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+templates.env.filters["day_date"] = (  # `5 Nov 2026`, locale-independent
+    lambda dt, tz: (lambda d: f"{d.day} {_MONTHS[d.month - 1]} {d.year}")(
+        dt.astimezone(ZoneInfo(tz)))
+)
 
 
 class LoginRequired(Exception):
