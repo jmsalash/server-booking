@@ -191,17 +191,19 @@ async def test_idle_shared_activity_resets_both(db, store, make_user, quiet_book
         assert (b.idle_warnings, b.idle_since) == (0, None)
 
 
-async def test_idle_shared_gpu_counts_if_either_uses_it(db, store, make_user, gpu_server):
+async def test_idle_cpu_only_booking_ignores_partner_gpu(db, store, make_user, gpu_server):
     ana = await make_user()
-    await _book(db, ana, gpu_server, L("2026-11-10T09:00"), L("2026-11-10T19:00"), "cpu",
-                shareable=True)
+    a = await _book(db, ana, gpu_server, L("2026-11-10T09:00"), L("2026-11-10T19:00"), "cpu",
+                    shareable=True)
     _, partner = await _partner(db, make_user, gpu_server)
     partner.shareable, partner.resource = False, "cpu_gpu"
-    now = L("2026-11-10T09:00")
+    now, actions = L("2026-11-10T09:00"), []
     while now <= L("2026-11-10T11:00"):
-        await _snap(db, gpu_server.id, now, gpus=((90.0, 50.0),))  # GPU busy
-        assert await idle_check(db, store, now) == []
+        await _snap(db, gpu_server.id, now, gpus=((90.0, 50.0),))  # GPU busy, CPU quiet
+        actions += await idle_check(db, store, now)
         now += STEP
+    # Only the CPU-only booking is judged idle; the GPU user keeps going.
+    assert [(bid, str(act)) for bid, act in actions] == [(a.id, "warn")]
 
 
 async def test_idle_job_skips_standalone(db, store, make_user, make_server):

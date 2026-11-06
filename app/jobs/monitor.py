@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot import format
 from app.domain import share
-from app.domain.idle import IdleAction, IdleState, evaluate_machine_idle, machine_resource
+from app.domain.idle import IdleAction, IdleState, evaluate_machine_idle
 from app.models import Booking, Server, User
 from app.services import booking as booking_svc
 from app.services import notify, usage
@@ -45,17 +45,17 @@ async def idle_check(
 ) -> list[tuple[int, IdleAction]]:
     """Advance idle tracking for every running booking.
 
-    Quietness is judged per machine: on a shared machine both bookings advance together, each
-    owner is warned with their own "I'm still using it" button, and only a booking that ran out
-    of warnings is reclaimed — the other keeps the machine. Any activity resets both.
+    Each booking is judged on what it booked (CPU-only bookings ignore the GPU). On a shared
+    machine each owner is warned with their own "I'm still using it" button, and only a booking
+    that ran out of warnings is reclaimed — the other keeps the machine.
     """
     rules = await store.get_rules()
     actions: list[tuple[int, IdleAction]] = []
     for server_id, bookings in await _active_now(db, now, lock=True):
         states = [IdleState(b.idle_warnings, b.idle_since, b.idle_ram_baseline) for b in bookings]
         latest = await usage.latest(db, server_id)
-        resource = machine_resource([b.resource for b in bookings])
-        decisions = evaluate_machine_idle(states, latest, now, resource, rules)
+        decisions = evaluate_machine_idle(states, latest, now, [b.resource for b in bookings],
+                                          rules)
         for b, decision in zip(bookings, decisions):
             b.idle_warnings = decision.state.warnings
             b.idle_since = decision.state.idle_since

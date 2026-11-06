@@ -119,11 +119,11 @@ get a Telegram alert if its average CPU, RAM or GPU memory reaches 50 % over
 
 **Idle reclaim.** If a booked server stays idle for 120 min (CPU < 10 %, GPU
 util < 5 % for CPU + GPU bookings, RAM change < 2 percentage points), the user
-is warned. After 3 warnings the booking is released. On a shared machine
-quietness is judged for the whole machine (the GPU counts if either booking uses
-it): both people are warned, each with their own "I'm still using it" button,
+is warned. After 3 warnings the booking is released. Each booking is judged on
+what it booked: a CPU only booking ignores the GPU entirely. On a shared machine
+each person is warned separately, with their own "I'm still using it" button,
 and only a booking that runs out of warnings is released — the other keeps the
-machine. Any activity resets both. Metrics older than 15 min count as stale and snapshots are
+machine. Metrics older than 15 min count as stale and snapshots are
 kept 48 h.
 
 Other defaults (all editable by admins): max booking 14 days, "booked soon"

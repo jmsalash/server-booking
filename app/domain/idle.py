@@ -45,11 +45,6 @@ def _is_quiet(
     return True
 
 
-def machine_resource(resources: Sequence[str]) -> str:
-    """What to check on a machine: GPU quietness counts if any booking on it uses the GPU."""
-    return "cpu_gpu" if "cpu_gpu" in resources else "cpu"
-
-
 def _advance(state: IdleState, latest: ServerUsage, now: datetime, rules: Rules) -> IdleDecision:
     """One booking's step once the machine is known to be quiet."""
     if state.idle_since is None:
@@ -71,27 +66,32 @@ def evaluate_machine_idle(
     states: Sequence[IdleState],
     latest: ServerUsage | None,
     now: datetime,
-    resource: str,
+    resources: Sequence[str],
     rules: Rules,
 ) -> list[IdleDecision]:
     """Idle step for every booking running on one machine (one, or two when shared).
 
-    Quietness is a property of the machine: activity seen against any booking's RAM baseline
-    resets them all. While quiet, each booking advances on its own idle clock and warning
-    count, so an "I'm still using it" on one booking protects only that one.
+    Each booking is judged on what it booked: a "cpu" booking only on CPU and RAM (GPU
+    activity is ignored), a "cpu_gpu" booking also on GPU utilisation. Each booking keeps its
+    own idle clock and warning count, so an "I'm still using it" protects only that booking.
     """
+    return [_evaluate_one(s, latest, now, r, rules) for s, r in zip(states, resources, strict=True)]
+
+
+def _evaluate_one(
+    state: IdleState, latest: ServerUsage | None, now: datetime, resource: str, rules: Rules
+) -> IdleDecision:
     missing = (
         latest is None
         or is_stale(latest.ts, now, rules)
         or (resource == "cpu_gpu" and not latest.gpus)
     )
     if missing:
-        return [IdleDecision(IdleAction.NONE, IdleState(s.warnings, None, None), None)
-                for s in states]
+        return IdleDecision(IdleAction.NONE, IdleState(state.warnings, None, None), None)
     assert latest is not None
-    if not all(_is_quiet(s, latest, resource, rules) for s in states):
-        return [IdleDecision(IdleAction.NONE, IdleState(0, None, None), None) for _ in states]
-    return [_advance(s, latest, now, rules) for s in states]
+    if not _is_quiet(state, latest, resource, rules):
+        return IdleDecision(IdleAction.NONE, IdleState(0, None, None), None)
+    return _advance(state, latest, now, rules)
 
 
 def evaluate_idle(
@@ -101,7 +101,7 @@ def evaluate_idle(
     resource: str,
     rules: Rules,
 ) -> IdleDecision:
-    return evaluate_machine_idle([state], latest, now, resource, rules)[0]
+    return _evaluate_one(state, latest, now, resource, rules)
 
 
 QUIET_MAX_GAP = timedelta(minutes=10)  # about twice the metrics poll interval
