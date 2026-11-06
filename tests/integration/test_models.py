@@ -61,3 +61,17 @@ async def test_orm_and_migrated_schema_agree(db):
     conn = await db.connection()
     result = await conn.run_sync(diff)
     assert result == []
+
+
+async def test_live_server_names_unique_but_archived_names_reusable(db, make_server):
+    old = await make_server(name="gpu-01")
+    with pytest.raises(IntegrityError):
+        async with db.begin_nested():
+            await make_server(name="gpu-01")
+    old.archived_at = T(9)
+    await db.flush()
+    await make_server(name="gpu-01")  # the archived one no longer holds the name
+    with pytest.raises(IntegrityError):
+        async with db.begin_nested():
+            old.archived_at = None  # restoring would make two live "gpu-01"
+            await db.flush()

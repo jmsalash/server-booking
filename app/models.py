@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -62,10 +63,13 @@ class Server(Base):
     __tablename__ = "servers"
     __table_args__ = (
         CheckConstraint("kind in ('grafana','standalone')", name="servers_kind_check"),
+        # Names are unique among live servers only, so a deleted server's name can be reused.
+        Index("servers_name_live_uq", "name", unique=True,
+              postgresql_where=text("archived_at IS NULL")),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String, unique=True)
+    name: Mapped[str] = mapped_column(String)
     hostname: Mapped[str] = mapped_column(String)
     kind: Mapped[str] = mapped_column(String)
     grafana_instance: Mapped[str | None] = mapped_column(String)
@@ -75,6 +79,8 @@ class Server(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     notes: Mapped[str | None] = mapped_column(Text)
     last_status_code: Mapped[str | None] = mapped_column(String)
+    # Set when an admin deletes the server: hidden everywhere live, history kept.
+    archived_at: Mapped[datetime | None] = mapped_column(TS)
 
 
 class Booking(Base):
