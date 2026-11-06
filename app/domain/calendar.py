@@ -125,6 +125,7 @@ def now_pct(week: Week, now: datetime) -> float | None:
 # Bar widths (percent of the week) below which the label shortens; a day is ~14.3%.
 FULL_NAME_PCT = 10.0
 INITIALS_PCT = 4.0
+ONE_LETTER_PCT = 3.0  # a 4 h bar is ~2.4%: room for one letter
 
 
 @dataclass(frozen=True)
@@ -139,11 +140,15 @@ class Bar(Span):
 
     @property
     def label(self) -> str:
-        """What fits on the bar: the full name, the first name, or initials (a few hours)."""
+        """What fits on the bar: the full name, the first name, initials, or one letter."""
         name = self.booking.user_name.strip()
         words = name.split()
+        if not words:
+            return name
+        if self.width < ONE_LETTER_PCT:
+            return words[0][0].upper()
         if self.width >= FULL_NAME_PCT or len(words) < 2:
-            return name if self.width >= INITIALS_PCT or not words else words[0][:2]
+            return name if self.width >= INITIALS_PCT else words[0][:2]
         if self.width >= INITIALS_PCT:
             return words[0]
         return "".join(w[0] for w in words[:2]).upper()

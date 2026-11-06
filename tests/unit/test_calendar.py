@@ -137,7 +137,7 @@ def test_short_booking_keeps_a_positive_width():
 
 
 @pytest.mark.parametrize("hours, label", [
-    (30, "Maria Francesca"), (8, "Maria"), (3, "MF"),
+    (30, "Maria Francesca"), (8, "Maria"), (6, "MF"), (4, "M"),
 ])
 def test_label_shortens_with_the_bar(hours, label):
     w = week_containing(date(2026, 11, 9), TZ)
@@ -149,5 +149,5 @@ def test_label_shortens_with_the_bar(hours, label):
 def test_label_single_word_name():
     w = week_containing(date(2026, 11, 9), TZ)
     start = L("2026-11-10T09:00")
-    assert layout_bars([bv(1, start, start + timedelta(hours=2), name="Bob")], w,
+    assert layout_bars([bv(1, start, start + timedelta(hours=6), name="Bob")], w,
                        w.start)[0].label == "Bo"
