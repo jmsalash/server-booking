@@ -853,7 +853,7 @@ async def server_fetch(
             ok = True
             await usage_svc.save_snapshot(db, server.id, u)  # board shows it right away
             parts = [f"CPU {u.cpu_pct:.1f}%", f"RAM {u.ram_pct:.1f}%"]
-            parts += [f"GPU {i} util {g.util_pct:.1f}% mem {g.mem_pct:.1f}%"
+            parts += [f"{g.label(i, len(u.gpus))}: util {g.util_pct:.1f}% mem {g.mem_pct:.1f}%"
                       for i, g in enumerate(u.gpus)]
             text = ", ".join(parts)
     await record(db, user, "fetch_usage", f"server:{server.id}", {"ok": ok})

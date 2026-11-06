@@ -277,6 +277,8 @@ async def test_fetch_usage_parses_real_dcgm_labels():
         u = await fetch_usage(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES,
                               "rvp01-Cocaina", 1, NOW)
     assert [(g.util_pct, g.mem_pct) for g in u.gpus] == [(61.0, 25.0)]
+    assert (u.gpus[0].index, u.gpus[0].model) == (0, "NVIDIA GeForce RTX 5090")
+    assert u.gpus[0].label(0, 1) == "GPU · RTX 5090"
 
 
 async def test_discover_real_dcgm_series_by_instance():

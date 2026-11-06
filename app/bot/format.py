@@ -45,7 +45,8 @@ def _usage_line(card: ServerCard) -> str:
     if u is None or card.stale:
         return "usage: unknown"
     parts = [f"CPU {u.cpu_pct:.0f}%", f"RAM {u.ram_pct:.0f}%"]
-    parts += [f"GPU{i} {g.util_pct:.0f}%/{g.mem_pct:.0f}%" for i, g in enumerate(u.gpus)]
+    parts += [f"{g.label(i, len(u.gpus))} {g.util_pct:.0f}% (mem {g.mem_pct:.0f}%)"
+              for i, g in enumerate(u.gpus)]
     return " · ".join(parts)
 
 

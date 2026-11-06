@@ -189,6 +189,23 @@ def _gpu_key(s: Series):
     return (2, 0, "&".join(f"{k}={v}" for k, v in sorted(s.labels.items())))
 
 
+_MODEL_LABELS = ("modelName", "name", "model", "gpu_name")  # DCGM, nvidia_gpu_exporter, others
+
+
+def _gpu_index(s: Series) -> int | None:
+    key = _gpu_key(s)
+    return key[1] if key[0] == 0 else None
+
+
+def _gpu_model(*series: Series) -> str | None:
+    """GPU model from the series labels (arithmetic queries may drop them, so try each)."""
+    for s in series:
+        for name in _MODEL_LABELS:
+            if s.labels.get(name, "").strip():
+                return s.labels[name].strip()
+    return None
+
+
 def _expand(q: str, instance: str) -> str:
     # {instance} is substituted raw; {instance_re} is regex-escaped (and backslashes
     # doubled, since it lands inside a double-quoted PromQL string) for =~ matchers.
@@ -223,7 +240,8 @@ async def fetch_usage(client: GrafanaClient, ds_uid: str, queries: dict[str, str
             keys = [_gpu_key(x) for x in group]
             if len(set(keys)) != len(keys):
                 raise MetricsUnavailable(f"duplicate GPU labels for {instance}")
-        gpus = tuple(GpuUsage(u.value, m.value) for u, m in zip(util, mem))
+        gpus = tuple(GpuUsage(u.value, m.value, _gpu_index(u), _gpu_model(u, m))
+                     for u, m in zip(util, mem))
     return ServerUsage(ts=now, cpu_pct=cpu.value, ram_pct=ram.value, gpus=gpus)
 
 

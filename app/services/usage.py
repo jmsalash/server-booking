@@ -12,14 +12,16 @@ def _to_usage(row: MetricSnapshot) -> ServerUsage:
         ts=row.ts,
         cpu_pct=row.cpu_pct,
         ram_pct=row.ram_pct,
-        gpus=tuple(GpuUsage(g["util_pct"], g["mem_pct"]) for g in (row.gpus or [])),
+        gpus=tuple(GpuUsage(g["util_pct"], g["mem_pct"], g.get("index"), g.get("model"))
+                   for g in (row.gpus or [])),
     )
 
 
 async def save_snapshot(db: AsyncSession, server_id: int, usage: ServerUsage) -> None:
     db.add(MetricSnapshot(
         server_id=server_id, ts=usage.ts, cpu_pct=usage.cpu_pct, ram_pct=usage.ram_pct,
-        gpus=[{"util_pct": g.util_pct, "mem_pct": g.mem_pct} for g in usage.gpus],
+        gpus=[{"util_pct": g.util_pct, "mem_pct": g.mem_pct, "index": g.index, "model": g.model}
+              for g in usage.gpus],
     ))
     await db.flush()
 

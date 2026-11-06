@@ -108,11 +108,12 @@ async def test_usage_bars_for_fresh_metrics(client, logged_in, db, make_server):
     server = await make_server(name="mon-1", kind="grafana", has_gpu=True, gpu_count=1)
     from app.domain.types import GpuUsage
     await usage.save_snapshot(db, server.id, ServerUsage(NOW - timedelta(minutes=2), 37.0, 42.0,
-                                                         (GpuUsage(81.0, 64.0),)))
+                                                         (GpuUsage(81.0, 64.0, 0,
+                                                                   "NVIDIA GeForce RTX 5090"),)))
     await db.commit()
     r = await client.get("/board/cards")
     assert "CPU" in r.text and "37%" in r.text and "42%" in r.text
-    assert "GPU 0" in r.text and "81%" in r.text and "64%" in r.text
+    assert "GPU · RTX 5090" in r.text and "81%" in r.text and "64%" in r.text
     assert "usage: unknown" not in r.text
 
 

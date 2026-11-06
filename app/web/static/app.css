@@ -229,6 +229,7 @@ td .alert { margin: 0; }
 
 .usage { display: grid; gap: .4rem; font-size: var(--fs-sm); }
 .usage p { margin: 0; }
+.usage .usage__gpu { margin-top: .3rem; font-weight: 600; font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .usage__none { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--muted); }
 .bar { display: grid; grid-template-columns: 5.6em 1fr 3em; gap: var(--s2); align-items: center; }
 .bar__name { color: var(--muted); font-size: var(--fs-xs); font-weight: 550; white-space: nowrap; }

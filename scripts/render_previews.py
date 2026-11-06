@@ -76,8 +76,12 @@ def _upgrade_head(url: str) -> None:
     command.upgrade(cfg, "head")
 
 
+MODELS = ("NVIDIA GeForce RTX 4080 SUPER", "NVIDIA GeForce RTX 5090", "NVIDIA GeForce RTX 4090")
+
+
 def _snapshots(cpu, ram, gpus):
-    return [ServerUsage(NOW - timedelta(minutes=m), cpu, ram, tuple(GpuUsage(*g) for g in gpus))
+    return [ServerUsage(NOW - timedelta(minutes=m), cpu, ram, tuple(GpuUsage(*g, i, MODELS[len(gpus) % len(MODELS)])
+                                                       for i, g in enumerate(gpus)))
             for m in range(55, -1, -5)]
 
 

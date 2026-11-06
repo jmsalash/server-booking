@@ -78,9 +78,17 @@ def test_detail_waiting_for_first_reading():
 
 
 def test_detail_usage_line():
-    u = ServerUsage(NOW, 34.2, 51.0, (GpuUsage(90.0, 80.4), GpuUsage(0.0, 1.0)))
+    u = ServerUsage(NOW, 34.2, 51.0, (GpuUsage(90.0, 80.4, 0, "NVIDIA GeForce RTX 4090"),
+                                      GpuUsage(0.0, 1.0)))
     text = server_detail(card(StatusCode.AVAILABLE, usage=u), TZ, URL, NOW)
-    assert "CPU 34% · RAM 51% · GPU0 90%/80% · GPU1 0%/1%" in text
+    assert "CPU 34% · RAM 51% · GPU 0 · RTX 4090 90% (mem 80%) · GPU 1 0% (mem 1%)" in text
+
+
+def test_gpu_label():
+    assert GpuUsage(1, 1).label(0, 1) == "GPU"
+    assert GpuUsage(1, 1, 0, "NVIDIA GeForce RTX 5090").label(0, 1) == "GPU · RTX 5090"
+    assert GpuUsage(1, 1, 3, "NVIDIA RTX A6000").label(0, 2) == "GPU 3 · RTX A6000"
+    assert GpuUsage(1, 1, None, "Tesla V100").label(1, 2) == "GPU 1 · Tesla V100"
 
 
 def test_detail_standalone_not_monitored():
