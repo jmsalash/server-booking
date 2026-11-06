@@ -75,7 +75,6 @@ class Server(Base):
     grafana_instance: Mapped[str | None] = mapped_column(String)
     has_gpu: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     gpu_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    shareable: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     notes: Mapped[str | None] = mapped_column(Text)
     last_status_code: Mapped[str | None] = mapped_column(String)
@@ -92,6 +91,10 @@ class Booking(Base):
             "status in ('active','cancelled','reclaimed','completed')",
             name="bookings_status_check",
         ),
+        # A partner (who joined someone's booking) can't open it to a third person.
+        CheckConstraint("NOT (shareable AND is_shared)", name="bookings_partner_not_shareable"),
+        # Primaries never overlap; a partner overlaps only shareable bookings (checked by the
+        # booking service under the server-row lock).
         ExcludeConstraint(
             ("server_id", "="),
             (func.tstzrange(text("start_at"), text("end_at")), "&&"),
@@ -109,6 +112,8 @@ class Booking(Base):
     resource: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="active", server_default="active")
     is_shared: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # The booker lets one other person book the same time (they become the partner).
+    shareable: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     idle_warnings: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     idle_since: Mapped[datetime | None] = mapped_column(TS)
     idle_ram_baseline: Mapped[float | None] = mapped_column(Float)

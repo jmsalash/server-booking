@@ -75,3 +75,55 @@ async def test_live_server_names_unique_but_archived_names_reusable(db, make_ser
         async with db.begin_nested():
             old.archived_at = None  # restoring would make two live "gpu-01"
             await db.flush()
+
+
+async def test_partner_cannot_be_shareable(db, make_user, make_server):
+    u, s = await make_user(), await make_server()
+    db.add(_b(u, s, 10, 14, is_shared=True, shareable=True))
+    with pytest.raises(IntegrityError):
+        await db.flush()
+
+
+async def test_migration_0003_moves_sharing_to_bookings(pg_url):
+    """Upgrading a 0002 database keeps its bookings, all non-shareable, and drops the flag."""
+    import asyncio
+    import uuid
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tests.conftest import _alembic
+
+    name = f"mig_{uuid.uuid4().hex[:8]}"
+    admin = create_async_engine(pg_url, isolation_level="AUTOCOMMIT")
+    async with admin.connect() as conn:
+        await conn.execute(text(f'CREATE DATABASE "{name}"'))
+    url = pg_url.rsplit("/", 1)[0] + "/" + name
+    engine = create_async_engine(url)
+    try:
+        await asyncio.to_thread(_alembic, url, "upgrade", "0002")
+        async with engine.begin() as conn:
+            await conn.execute(text(
+                "INSERT INTO users (id, telegram_id, display_name) VALUES (1, 1, 'Ana')"))
+            await conn.execute(text(
+                "INSERT INTO servers (id, name, hostname, kind, shareable) "
+                "VALUES (1, 'gpu-01', 'gpu-01.lab', 'grafana', true)"))
+            await conn.execute(text(
+                "INSERT INTO bookings (user_id, server_id, start_at, end_at, resource, is_shared) "
+                "VALUES (1, 1, '2026-11-10 10:00Z', '2026-11-10 14:00Z', 'cpu', false), "
+                "       (1, 1, '2026-11-10 11:00Z', '2026-11-10 12:00Z', 'cpu', true)"))
+        await asyncio.to_thread(_alembic, url, "upgrade", "head")
+        async with engine.connect() as conn:
+            rows = (await conn.execute(text("SELECT shareable FROM bookings"))).all()
+            assert [r[0] for r in rows] == [False, False]
+            cols = (await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'servers'"))).scalars().all()
+            assert "shareable" not in cols
+        await asyncio.to_thread(_alembic, url, "downgrade", "0002")
+        async with engine.connect() as conn:
+            assert (await conn.execute(text("SELECT shareable FROM servers"))).scalar() is False
+    finally:
+        await engine.dispose()
+        async with admin.connect() as conn:
+            await conn.execute(text(f'DROP DATABASE "{name}" WITH (FORCE)'))
+        await admin.dispose()

@@ -31,12 +31,16 @@ def pg_url():
         yield "postgresql+asyncpg://" + url.split("://", 1)[1]
 
 
-def _upgrade_head(url: str) -> None:
+def _alembic(url: str, cmd: str, revision: str) -> None:
     root = Path(__file__).resolve().parent.parent
     cfg = Config(str(root / "alembic.ini"))
     cfg.set_main_option("script_location", str(root / "migrations"))
     cfg.set_main_option("sqlalchemy.url", url)
-    command.upgrade(cfg, "head")
+    getattr(command, cmd)(cfg, revision)
+
+
+def _upgrade_head(url: str) -> None:
+    _alembic(url, "upgrade", "head")
 
 
 @pytest_asyncio.fixture(scope="session")
