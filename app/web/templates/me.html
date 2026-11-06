@@ -21,7 +21,6 @@
       <span class="badge">{{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}</span>
       {% if b.shareable %}<span class="badge badge--shareable">Shareable</span>{% endif %}
       {% set with = partners.get(b.id, []) %}
-      {% if with %}<span class="badge badge--shared">shared</span>{% endif %}
     </div>
     <p class="booking__when">{{ b.start|day_hm(tz) }} – {{ b.end|day_hm(tz) }}</p>
     {% for x in with %}
