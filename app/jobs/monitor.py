@@ -81,7 +81,7 @@ async def idle_check(
 
 
 async def full_check(db: AsyncSession, store: SettingsStore, now: datetime) -> int:
-    """Warn the people using a machine when its RAM or a disk is almost full.
+    """Warn the people using a machine when its RAM is almost full, or a disk becomes so.
 
     Runs at any hour. Each booking remembers what it was warned about, so a warning is
     repeated only after the value dropped back (see readings.evaluate_full). Only the
@@ -94,7 +94,8 @@ async def full_check(db: AsyncSession, store: SettingsStore, now: datetime) -> i
         latest = await usage.latest(db, server_id)
         server = await db.get(Server, server_id)
         for b in bookings:
-            state = FullState(b.ram_alerted_at is not None, frozenset(b.disk_alerted or ()))
+            disks = frozenset(b.disk_alerted) if b.disk_alerted is not None else None
+            state = FullState(b.ram_alerted_at is not None, disks)
             d = evaluate_full(state, latest, now, rules)
             if d.state != state:
                 changed[b.id] = d.state
@@ -113,7 +114,7 @@ async def full_check(db: AsyncSession, store: SettingsStore, now: datetime) -> i
                 b.ram_alerted_at = None
             elif b.ram_alerted_at is None:
                 b.ram_alerted_at = now
-            b.disk_alerted = sorted(st.disks)
+            b.disk_alerted = sorted(st.disks) if st.disks is not None else None
         await db.flush()
     sent = 0
     for user_id, text in dict.fromkeys(sends):  # one copy per person, in order

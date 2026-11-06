@@ -18,9 +18,14 @@ def is_stale(latest_ts: datetime | None, now: datetime, rules: Rules) -> bool:
 
 @dataclass(frozen=True)
 class FullState:
-    """What a booking was already warned about: RAM, and the disk mounts."""
+    """What a booking was already warned about: RAM, and the disk mounts.
+
+    `disks` is None until the booking's first reading with disk data; that reading only
+    records the mounts that are already full (no warning), so only a disk that becomes
+    almost full during the booking is reported.
+    """
     ram: bool = False
-    disks: frozenset[str] = frozenset()
+    disks: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -35,8 +40,10 @@ def evaluate_full(
 ) -> FullDecision:
     """Warn once when RAM or a disk crosses its threshold; re-arm once it drops REARM_PP below.
 
-    Stale or missing data neither warns nor re-arms; neither does a mount missing from the
-    reading (e.g. the disk query failed).
+    A disk already full at the booking's first disk reading counts as warned (silently), so
+    it is reported only after it drops REARM_PP below and fills up again. Stale or missing
+    data neither warns nor re-arms; neither does a mount missing from the reading (e.g. the
+    disk query failed).
     """
     if latest is None or is_stale(latest.ts, now, rules):
         return FullDecision(state)
@@ -46,6 +53,11 @@ def evaluate_full(
         ram = latest.ram_pct >= rules.ram_alert_pct - REARM_PP
     elif latest.ram_pct >= rules.ram_alert_pct:
         ram, ram_alert = True, latest.ram_pct
+    if state.disks is None:  # first disk reading: the baseline
+        if not latest.disks:
+            return FullDecision(FullState(ram, None), ram_alert)
+        full = frozenset(d.mount for d in latest.disks if d.used_pct >= rules.disk_alert_pct)
+        return FullDecision(FullState(ram, full), ram_alert)
     alerted = set(state.disks)
     new: list[DiskUsage] = []
     for d in latest.disks:

@@ -122,9 +122,12 @@ CPU + GPU choice is shown on the board and in the bot so you can see what the
 other person uses; it is not enforced.
 
 **Full RAM / disk.** Everyone with a booking running on a machine gets a
-Telegram warning (at any hour) when its RAM or a disk reaches 90 % (admin-editable;
-disks come from the optional `disk` query, one series per mount point); it is
-repeated only after the value has dropped 5 percentage points below and crossed again.
+Telegram warning (at any hour) when its RAM reaches 90 %, or when a disk becomes
+almost full (90 %) during their booking (both admin-editable; disks come from the
+optional `disk` query, one series per mount point). A disk that was already full
+when the booking began is not reported until it has dropped below and filled up
+again. A warning is repeated only after the value has dropped 5 percentage points
+below and crossed again. Disk use is not shown on the board or in the bot.
 
 **Idle reclaim.** If a booked server stays idle for 120 min (CPU < 10 %, every
 GPU < 5 % utilisation, RAM change < 2 percentage points), the user is warned.

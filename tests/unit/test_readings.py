@@ -29,6 +29,9 @@ def test_rules_defaults_and_old_stored_keys_ignored():
     assert not hasattr(r, "spike_threshold_pct") and not hasattr(r, "share_avg_min")
 
 
+BASE = FullState(disks=frozenset())  # baseline taken: no disk was full
+
+
 def test_ram_alerts_once_then_rearms_below_threshold_minus_5():
     s = FullState()
     d = evaluate_full(s, reading(ram=89.9), now, R)
@@ -46,8 +49,8 @@ def test_ram_alerts_once_then_rearms_below_threshold_minus_5():
 
 
 def test_disk_alerts_per_mount_worst_first():
-    d = evaluate_full(FullState(), reading(disks=[("/", 41.0), ("/data", 92.0),
-                                                  ("/scratch", 96.0)]), now, R)
+    d = evaluate_full(BASE, reading(disks=[("/", 41.0), ("/data", 92.0),
+                                           ("/scratch", 96.0)]), now, R)
     assert [x.mount for x in d.disks] == ["/scratch", "/data"]
     assert d.state.disks == {"/data", "/scratch"} and d.ram_pct is None
     # /data drops below 85 and re-arms; /scratch stays alerted; / crosses for the first time.
@@ -71,5 +74,36 @@ def test_stale_or_missing_data_neither_alerts_nor_rearms():
 
 def test_thresholds_follow_rules():
     r = Rules(ram_alert_pct=50.0, disk_alert_pct=70.0)
-    d = evaluate_full(FullState(), reading(ram=50.0, disks=[("/", 70.0)]), now, r)
+    d = evaluate_full(BASE, reading(ram=50.0, disks=[("/", 70.0)]), now, r)
     assert d.ram_pct == 50.0 and [x.mount for x in d.disks] == ["/"]
+
+
+def test_disk_full_at_first_reading_is_recorded_silently():
+    d = evaluate_full(FullState(), reading(disks=[("/", 41.0), ("/data", 96.0)]), now, R)
+    assert not d.disks and d.state.disks == {"/data"}
+    d = evaluate_full(d.state, reading(disks=[("/", 41.0), ("/data", 99.0)]), now, R)
+    assert not d.disks  # still full: no warning
+
+
+def test_disk_that_becomes_full_warns_once():
+    d = evaluate_full(FullState(), reading(disks=[("/data", 70.0)]), now, R)
+    assert not d.disks and d.state.disks == frozenset()
+    d = evaluate_full(d.state, reading(disks=[("/data", 91.0)]), now, R)
+    assert [x.mount for x in d.disks] == ["/data"]
+    d = evaluate_full(d.state, reading(disks=[("/data", 93.0)]), now, R)
+    assert not d.disks
+
+
+def test_disk_full_at_start_warns_after_dropping_and_refilling():
+    d = evaluate_full(FullState(), reading(disks=[("/data", 95.0)]), now, R)
+    d = evaluate_full(d.state, reading(disks=[("/data", 84.0)]), now, R)
+    assert not d.disks and d.state.disks == frozenset()
+    d = evaluate_full(d.state, reading(disks=[("/data", 90.0)]), now, R)
+    assert [x.mount for x in d.disks] == ["/data"]
+
+
+def test_no_baseline_without_disk_data():
+    d = evaluate_full(FullState(), reading(ram=95.0), now, R)
+    assert d.state.disks is None and d.ram_pct == 95.0  # RAM is unaffected
+    d = evaluate_full(FullState(), reading(disks=[("/", 99.0)], age_min=16), now, R)
+    assert d.state == FullState()

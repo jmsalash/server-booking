@@ -932,7 +932,8 @@ async def test_about_page_explains_bot_and_rules(client, logged_in, db, store):
     for text in ("/status@lab_booking_bot", "/free@lab_booking_bot", "/notify@lab_booking_bot gpu-05",
                  "14 days", "2 h", "Mon–Fri 09:00–19:00", "Join", 'href="/about"'):
         assert text in r.text, text
-    assert "Telegram warning if RAM or a disk on your machine passes 90%" in r.text
+    assert ("Telegram warning if RAM on your machine passes 90%, or a disk on it becomes almost "
+            "full (90%) during your booking") in r.text
 
 
 async def test_board_marks_available_cards_and_offers_filter(client, logged_in, db, make_user,

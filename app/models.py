@@ -119,11 +119,10 @@ class Booking(Base):
     idle_ram_baseline: Mapped[float | None] = mapped_column(Float)
     last_warning_at: Mapped[datetime | None] = mapped_column(TS)
     # RAM / disk "almost full" warnings already sent for this booking (re-armed when the value
-    # drops back), so they are not repeated every poll.
+    # drops back), so they are not repeated every poll. disk_alerted is NULL until the first
+    # disk reading, which records the mounts already full then without warning.
     ram_alerted_at: Mapped[datetime | None] = mapped_column(TS)
-    disk_alerted: Mapped[list[str]] = mapped_column(
-        JSONB, default=list, server_default=text("'[]'::jsonb")
-    )
+    disk_alerted: Mapped[list[str] | None] = mapped_column(JSONB(none_as_null=True))
     start_reminder_sent: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )

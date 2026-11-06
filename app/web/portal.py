@@ -455,9 +455,8 @@ async def about_page(
 
 def _full_text(rules: Rules) -> str:
     ram, disk = f"{rules.ram_alert_pct:g}%", f"{rules.disk_alert_pct:g}%"
-    if ram == disk:
-        return f"RAM or a disk on your machine passes {ram}"
-    return f"RAM on your machine passes {ram} or a disk passes {disk}"
+    return (f"RAM on your machine passes {ram}, or a disk on it becomes almost full ({disk}) "
+            "during your booking")
 
 
 @router.get("/me")

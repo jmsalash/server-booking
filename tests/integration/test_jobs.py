@@ -285,6 +285,11 @@ async def test_full_disk_lists_mounts_at_night(db, store, make_user, gpu_server)
     ana = await make_user(display_name="Ana")
     b = await _book(db, ana, gpu_server, L("2026-11-10T20:00"), L("2026-11-11T08:00"))
     now = L("2026-11-11T03:00")  # outside working hours
+    await _snap(db, gpu_server.id, now, disks=[("/", 41.0), ("/data", 80.0), ("/scratch", 70.0)])
+    assert await full_check(db, store, now) == 0  # the baseline: nothing full
+    await db.refresh(b)
+    assert b.disk_alerted == []
+    now += STEP
     await _snap(db, gpu_server.id, now,
                 disks=[("/", 41.0), ("/data", 96.0), ("/scratch", 92.4)])
     assert await full_check(db, store, now) == 1
@@ -315,8 +320,48 @@ async def test_full_not_for_free_machines_or_stale_data(db, store, make_user, gp
     await _snap(db, other.id, now - timedelta(minutes=30), ram=99.0, disks=[("/", 99.0)])
     assert await full_check(db, store, now) == 0
     await db.refresh(b)
-    assert b.ram_alerted_at is None and b.disk_alerted == []
+    assert b.ram_alerted_at is None and b.disk_alerted is None
     assert await _items(db) == []
+
+
+async def test_disk_already_full_at_start_warns_only_after_refilling(db, store, make_user,
+                                                                      gpu_server):
+    ana = await make_user(display_name="Ana")
+    b = await _book(db, ana, gpu_server, L("2026-11-10T09:00"), L("2026-11-10T19:00"))
+    assert b.disk_alerted is None
+    now = L("2026-11-10T09:05")
+    await _snap(db, gpu_server.id, now, disks=[("/", 41.0), ("/data", 96.0)])
+    assert await full_check(db, store, now) == 0  # already full when the booking began
+    await db.refresh(b)
+    assert b.disk_alerted == ["/data"]
+    for pct in (97.0, 86.0, 92.0):  # still full / not yet 5 pp below: nothing
+        now += STEP
+        await _snap(db, gpu_server.id, now, disks=[("/", 41.0), ("/data", pct)])
+        assert await full_check(db, store, now) == 0, pct
+    now += STEP
+    await _snap(db, gpu_server.id, now, disks=[("/", 41.0), ("/data", 84.0)])
+    assert await full_check(db, store, now) == 0
+    now += STEP
+    await _snap(db, gpu_server.id, now, disks=[("/", 41.0), ("/data", 91.0)])
+    assert await full_check(db, store, now) == 1
+    assert await _texts(db, ana.telegram_id) == [
+        "⚠️ gpu-01: disk /data is 91% full. Free some space before it runs out."
+    ]
+
+
+async def test_disk_baseline_waits_for_disk_data(db, store, make_user, gpu_server):
+    ana = await make_user(display_name="Ana")
+    b = await _book(db, ana, gpu_server, L("2026-11-10T09:00"), L("2026-11-10T19:00"))
+    now = L("2026-11-10T09:05")
+    await _snap(db, gpu_server.id, now)  # disk query failed: no disks
+    assert await full_check(db, store, now) == 0
+    await db.refresh(b)
+    assert b.disk_alerted is None
+    now += STEP
+    await _snap(db, gpu_server.id, now, disks=[("/", 95.0)])
+    assert await full_check(db, store, now) == 0  # first disk data is the baseline
+    await db.refresh(b)
+    assert b.disk_alerted == ["/"]
 
 
 async def test_full_check_locks_only_changed_bookings(sessionmaker, box, shared_pair, db):
