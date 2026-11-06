@@ -1,12 +1,12 @@
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot import format
-from app.domain import share
 from app.domain.idle import IdleAction, IdleState, evaluate_machine_idle
+from app.domain.readings import FullState, evaluate_full
 from app.models import Booking, Server, User
 from app.services import booking as booking_svc
 from app.services import notify, usage
@@ -81,49 +81,43 @@ async def idle_check(
     return actions
 
 
-def _by_creation(pair: list[Booking]) -> list[Booking]:
-    return sorted(pair, key=lambda b: (b.created_at, b.id))
+async def full_check(db: AsyncSession, store: SettingsStore, now: datetime) -> int:
+    """Warn the people using a machine when its RAM or a disk is almost full.
 
-
-def _shared_of(pair: list[Booking]) -> Booking:
-    flagged = [b for b in pair if b.is_shared]
-    if len(flagged) == 1:
-        return flagged[0]
-    return _by_creation(pair)[1]  # the later-created one
-
-
-async def spike_check(db: AsyncSession, store: SettingsStore, now: datetime) -> int:
+    Runs at any hour. Each booking remembers what it was warned about, so a warning is
+    repeated only after the value dropped back (see readings.evaluate_full). Only the
+    bookings whose state changes are locked. Returns the number of messages queued.
+    """
     rules = await store.get_rules()
-    alerts: list[tuple[Server, list[Booking]]] = []
-    flags: dict[int, bool] = {}
-    # Read without locks; only the shared bookings whose flag changes are locked below.
-    for server_id, pair in await _active_now(db, now, lock=False):
-        if len(pair) != 2:
-            continue
+    changed: dict[int, FullState] = {}
+    sends: list[tuple[int, str]] = []  # (user id, text)
+    for server_id, bookings in await _active_now(db, now, lock=False):
+        latest = await usage.latest(db, server_id)
         server = await db.get(Server, server_id)
-        gpu_count = server.gpu_count if server.has_gpu else 0
-        snaps = await usage.recent(db, server_id, now - timedelta(minutes=rules.spike_avg_min))
-        over = share.is_over_threshold(snaps, now, rules, rules.spike_avg_min, gpu_count)
-        shared = _shared_of(pair)
-        send, flag = share.spike_decision(shared.spike_alerted, over)
-        if flag != shared.spike_alerted:
-            flags[shared.id] = flag
-        if send:
-            alerts.append((server, _by_creation(pair)))
-    if flags:
+        for b in bookings:
+            state = FullState(b.ram_alerted_at is not None, frozenset(b.disk_alerted or ()))
+            d = evaluate_full(state, latest, now, rules)
+            if d.state != state:
+                changed[b.id] = d.state
+            if d.ram_pct is not None:
+                sends.append((b.user_id, format.ram_full(server.name, d.ram_pct)))
+            if d.disks:
+                sends.append((b.user_id, format.disk_full(server.name, d.disks)))
+    if changed:
         locked = await db.scalars(
-            select(Booking).where(Booking.id.in_(flags)).order_by(Booking.id)
+            select(Booking).where(Booking.id.in_(changed)).order_by(Booking.id)
             .with_for_update().execution_options(populate_existing=True)
         )
         for b in locked:
-            b.spike_alerted = flags[b.id]
+            st = changed[b.id]
+            if not st.ram:
+                b.ram_alerted_at = None
+            elif b.ram_alerted_at is None:
+                b.ram_alerted_at = now
+            b.disk_alerted = sorted(st.disks)
         await db.flush()
-    for server, pair in alerts:
-        users = [await db.get(User, b.user_id) for b in pair]
-        for me, other in ((users[0], users[1]), (users[1], users[0])):
-            text = (
-                f"⚠️ Usage on {server.name} is high. "
-                f"You are sharing it with {other.display_name}."
-            )
-            await notify.dm(db, me, text, now)
-    return len(alerts)
+    sent = 0
+    for user_id, text in dict.fromkeys(sends):  # one copy per person, in order
+        await notify.dm(db, await db.get(User, user_id), text, now)
+        sent += 1
+    return sent

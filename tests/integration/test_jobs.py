@@ -10,7 +10,7 @@ from app.domain.idle import IdleAction
 from app.domain.timeutil import parse_local
 from app.jobs.lifecycle import booking_lifecycle
 from app.jobs.membership import membership_sync
-from app.jobs.monitor import idle_check, spike_check
+from app.jobs.monitor import full_check, idle_check
 from app.jobs.runner import run_job
 from app.models import Booking, MetricSnapshot, OutboxItem, Server, User
 from app.services import booking as booking_svc
@@ -41,10 +41,11 @@ async def _topic_texts(db) -> list[str]:
     return [it.payload["text"] for it in await _items(db) if it.payload["thread_id"] is not None]
 
 
-async def _snap(db, server_id, ts, cpu=1.0, ram=30.0, gpus=((0.0, 1.0),)):
+async def _snap(db, server_id, ts, cpu=1.0, ram=30.0, gpus=((0.0, 1.0),), disks=()):
     db.add(MetricSnapshot(
         server_id=server_id, ts=ts, cpu_pct=cpu, ram_pct=ram,
         gpus=[{"util_pct": u, "mem_pct": m} for u, m in gpus],
+        disks=[{"mount": mnt, "used_pct": pct} for mnt, pct in disks],
     ))
     await db.flush()
 
@@ -231,66 +232,106 @@ async def test_grafana_outage_pauses_reclaim(db, store, quiet_booking):
     assert quiet_booking.idle_since is None
 
 
-# --- spike --------------------------------------------------------------------------------------
+# --- full RAM / disk ----------------------------------------------------------------------------
 
 
 @pytest_asyncio.fixture
 async def shared_pair(db, make_user, gpu_server):
     a = await make_user(display_name="Ana")
     b = await make_user(display_name="Bea")
-    first = await _book(db, a, gpu_server, L("2026-11-10T09:00"), L("2026-11-10T19:00"))
+    first = await _book(db, a, gpu_server, L("2026-11-10T09:00"), L("2026-11-10T19:00"),
+                        shareable=True)
     second = await _book(
         db, b, gpu_server, L("2026-11-10T10:00"), L("2026-11-10T14:00"), is_shared=True
     )
     return gpu_server, (a, first), (b, second)
 
 
-async def test_spike_alert_once_per_spike(db, store, shared_pair):
-    server, (ana, _first), (bea, second) = shared_pair
+RAM_TEXT = "⚠️ gpu-01: RAM is {}% full. Your job may crash if it runs out."
+
+
+async def test_full_ram_alerts_both_once_and_rearms(db, store, shared_pair):
+    await _configure_topic(store)
+    server, (ana, first), (bea, second) = shared_pair
     now = L("2026-11-10T10:30")
-    # Quiet: no alert.
-    await _snap(db, server.id, now - STEP)
-    assert await spike_check(db, store, now) == 0
-    # Spike starts: alert once, to both users.
+    await _snap(db, server.id, now, ram=80.0)
+    assert await full_check(db, store, now) == 0
+    # Crosses 90 %: both people get it, nothing in the topic.
     now += STEP
-    await _snap(db, server.id, now, cpu=100.0)
-    assert await spike_check(db, store, now) == 1
-    assert await _texts(db, ana.telegram_id) == [
-        "⚠️ Usage on gpu-01 is high. You are sharing it with Bea."
-    ]
-    assert await _texts(db, bea.telegram_id) == [
-        "⚠️ Usage on gpu-01 is high. You are sharing it with Ana."
-    ]
-    await db.refresh(second)
-    assert second.spike_alerted is True
-    # Still high: no repeat.
+    await _snap(db, server.id, now, ram=94.0)
+    assert await full_check(db, store, now) == 2
+    assert await _texts(db, ana.telegram_id) == [RAM_TEXT.format(94)]
+    assert await _texts(db, bea.telegram_id) == [RAM_TEXT.format(94)]
+    assert await _topic_texts(db) == []
+    await db.refresh(first)
+    assert first.ram_alerted_at == now
+    # Still high, then down to 86 (not 5 pp below): no repeat.
+    for ram in (97.0, 86.0, 93.0):
+        now += STEP
+        await _snap(db, server.id, now, ram=ram)
+        assert await full_check(db, store, now) == 0, ram
+    # Below 85: re-armed; crossing again alerts again.
     now += STEP
-    await _snap(db, server.id, now, cpu=100.0)
-    assert await spike_check(db, store, now) == 0
-    assert len(await _items(db)) == 2
-    # Spike ends (15-min average drops back under threshold): flag cleared.
-    now += timedelta(minutes=20)
-    await _snap(db, server.id, now)
-    assert await spike_check(db, store, now) == 0
-    await db.refresh(second)
-    assert second.spike_alerted is False
-    # A new spike alerts again.
+    await _snap(db, server.id, now, ram=84.0)
+    assert await full_check(db, store, now) == 0
+    await db.refresh(first)
+    assert first.ram_alerted_at is None
     now += STEP
-    await _snap(db, server.id, now, cpu=100.0)
-    assert await spike_check(db, store, now) == 1
+    await _snap(db, server.id, now, ram=91.0)
+    assert await full_check(db, store, now) == 2
     assert len(await _items(db)) == 4
 
 
-async def test_spike_check_does_not_lock_unwritten_bookings(sessionmaker, box, shared_pair, db):
-    server, (_ana, first), (_bea, _second) = shared_pair
+async def test_full_disk_lists_mounts_at_night(db, store, make_user, gpu_server):
+    ana = await make_user(display_name="Ana")
+    b = await _book(db, ana, gpu_server, L("2026-11-10T20:00"), L("2026-11-11T08:00"))
+    now = L("2026-11-11T03:00")  # outside working hours
+    await _snap(db, gpu_server.id, now,
+                disks=[("/", 41.0), ("/data", 96.0), ("/scratch", 92.4)])
+    assert await full_check(db, store, now) == 1
+    assert await _texts(db, ana.telegram_id) == [
+        "⚠️ gpu-01: disks are almost full: /data 96%, /scratch 92%. "
+        "Free some space before they run out."
+    ]
+    await db.refresh(b)
+    assert b.disk_alerted == ["/data", "/scratch"] and b.ram_alerted_at is None
+    now += STEP
+    await _snap(db, gpu_server.id, now, disks=[("/", 91.0), ("/data", 96.0)])
+    assert await full_check(db, store, now) == 1
+    assert (await _texts(db, ana.telegram_id))[-1] == (
+        "⚠️ gpu-01: disk / is 91% full. Free some space before it runs out."
+    )
+
+
+async def test_full_not_for_free_machines_or_stale_data(db, store, make_user, gpu_server,
+                                                       make_server):
+    ana = await make_user(display_name="Ana")
+    now = L("2026-11-10T10:30")
+    # Free machine with full RAM/disk: nobody is told.
+    await _snap(db, gpu_server.id, now, ram=99.0, disks=[("/", 99.0)])
+    assert await full_check(db, store, now) == 0
+    # In use, but the last reading is stale: no alert and nothing remembered.
+    other = await make_server(name="gpu-02", kind="grafana")
+    b = await _book(db, ana, other, L("2026-11-10T09:00"), L("2026-11-10T19:00"))
+    await _snap(db, other.id, now - timedelta(minutes=30), ram=99.0, disks=[("/", 99.0)])
+    assert await full_check(db, store, now) == 0
+    await db.refresh(b)
+    assert b.ram_alerted_at is None and b.disk_alerted == []
+    assert await _items(db) == []
+
+
+async def test_full_check_locks_only_changed_bookings(sessionmaker, box, shared_pair, db):
+    server, (_ana, first), (_bea, second) = shared_pair
+    now = L("2026-11-10T10:30")
+    # The partner was already warned; the main booking was not.
+    second.ram_alerted_at = now - STEP
+    await _snap(db, server.id, now, ram=95.0)
     await db.commit()
     async with sessionmaker() as holder, sessionmaker() as s:
-        # Another transaction holds the non-shared booking (e.g. a "still using it" ack).
-        await holder.execute(
-            select(Booking).where(Booking.id == first.id).with_for_update()
-        )
+        # Another transaction holds the partner's row: full_check must not wait for it.
+        await holder.execute(select(Booking).where(Booking.id == second.id).with_for_update())
         await s.execute(text("SET LOCAL lock_timeout = '2s'"))
-        assert await spike_check(s, SettingsStore(s, box), L("2026-11-10T10:30")) == 0
+        assert await full_check(s, SettingsStore(s, box), now) == 1
         await s.rollback()
         await holder.rollback()
 

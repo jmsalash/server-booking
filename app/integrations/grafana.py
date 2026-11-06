@@ -6,7 +6,7 @@ from datetime import datetime
 
 import httpx
 
-from app.domain.types import GpuUsage, ServerUsage
+from app.domain.types import DiskUsage, GpuUsage, ServerUsage
 
 # Defaults target node_exporter (CPU/RAM, hosts) + the NVIDIA DCGM exporter (GPUs). DCGM series
 # carry the same `instance` label as node_exporter (its `hostname` label is a container id).
@@ -14,6 +14,9 @@ from app.domain.types import GpuUsage, ServerUsage
 # stored as "gpu-01" matches instance="GPU-01.lab:9100". The PromQL text holds `\\.` (a
 # double-quoted PromQL string), so the regex engine sees `\.`.
 _INST = r'instance=~"(?i){instance_re}(\\.[^:]*)?(:.*)?"'
+# Real filesystems only: no RAM-backed, container, snap or boot mounts.
+_FS = (_INST + ',fstype!~"tmpfs|devtmpfs|overlay|squashfs|ramfs|nsfs|fuse.*|efivarfs|autofs"'
+       ',mountpoint!~"/boot.*|/snap/.*|/run.*|/var/lib/docker/.*"')
 DEFAULT_QUERIES: dict[str, str] = {
     "cpu": '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle",' + _INST + '}[5m])))',
     "ram": ('100 * (1 - node_memory_MemAvailable_bytes{' + _INST + '}'
@@ -21,6 +24,10 @@ DEFAULT_QUERIES: dict[str, str] = {
     "gpu_util": 'DCGM_FI_DEV_GPU_UTIL{' + _INST + '}',
     "gpu_mem": ('100 * DCGM_FI_DEV_FB_USED{' + _INST + '}'
                 ' / (DCGM_FI_DEV_FB_USED{' + _INST + '} + DCGM_FI_DEV_FB_FREE{' + _INST + '})'),
+    # Used % per mount point (one series per `mountpoint`). Optional: if it fails or returns
+    # nothing the reading simply has no disks.
+    "disk": ('100 * (1 - node_filesystem_avail_bytes{' + _FS + '}'
+             ' / node_filesystem_size_bytes{' + _FS + '})'),
     # Discovery ("Import from Grafana"): one series per host, labelled `instance`.
     "discover_hosts": 'count by (instance) (node_cpu_seconds_total{mode="idle"})',
     "discover_gpus": 'count by (instance) (DCGM_FI_DEV_GPU_UTIL)',
@@ -242,7 +249,31 @@ async def fetch_usage(client: GrafanaClient, ds_uid: str, queries: dict[str, str
                 raise MetricsUnavailable(f"duplicate GPU labels for {instance}")
         gpus = tuple(GpuUsage(u.value, m.value, _gpu_index(u), _gpu_model(u, m))
                      for u, m in zip(util, mem))
-    return ServerUsage(ts=now, cpu_pct=cpu.value, ram_pct=ram.value, gpus=gpus)
+    return ServerUsage(ts=now, cpu_pct=cpu.value, ram_pct=ram.value, gpus=gpus,
+                       disks=await _disks(one, queries))
+
+
+def parse_disks(series: list[Series]) -> tuple[DiskUsage, ...]:
+    """One DiskUsage per `mountpoint` label, sorted by mount. The same mount seen more than
+    once (e.g. `instance` with and without a port) keeps the highest value."""
+    by_mount: dict[str, float] = {}
+    for s in series:
+        mount = s.labels.get("mountpoint", "").strip()
+        if not mount:
+            continue
+        pct = min(100.0, max(0.0, s.value))
+        by_mount[mount] = max(pct, by_mount.get(mount, pct))
+    return tuple(DiskUsage(m, by_mount[m]) for m in sorted(by_mount))
+
+
+async def _disks(one, queries: dict[str, str]) -> tuple[DiskUsage, ...]:
+    """Disk usage is optional: a missing or failing query never fails the reading."""
+    if not queries.get("disk"):
+        return ()
+    try:
+        return parse_disks(await one("disk"))
+    except GrafanaError:
+        return ()
 
 
 # --- discovery ------------------------------------------------------------------------------

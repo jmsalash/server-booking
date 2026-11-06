@@ -194,7 +194,7 @@ async def _board_ctx(db: AsyncSession, store: SettingsStore, user: User) -> dict
                                  "end": local(end, rules.timezone)}
     return {"user": user, "cards": cards, "tz": rules.timezone, "legend": legend(rules),
             "monitoring_down": board.monitoring_down(cards), "mine": mine, "join": join,
-            "now": now}
+            "now": now, "ram_alert": rules.ram_alert_pct, "disk_alert": rules.disk_alert_pct}
 
 
 @router.get("/")
@@ -376,7 +376,15 @@ async def about_page(
         "idle_window": _hours(rules.idle_window_min), "warnings": rules.max_idle_warnings,
         "work": f"{_days(rules.work_days)} {rules.work_start}–{rules.work_end}",
         "idle_cpu": f"{rules.idle_cpu_pct:g}", "idle_gpu": f"{rules.idle_gpu_util_pct:g}",
+        "full": _full_text(rules),
     })
+
+
+def _full_text(rules: Rules) -> str:
+    ram, disk = f"{rules.ram_alert_pct:g}%", f"{rules.disk_alert_pct:g}%"
+    if ram == disk:
+        return f"RAM or a disk on your machine passes {ram}"
+    return f"RAM on your machine passes {ram} or a disk passes {disk}"
 
 
 @router.get("/me")

@@ -35,7 +35,7 @@ sys.path.insert(0, str(ROOT))
 
 import app.clock  # noqa: E402
 from app.db import make_sessionmaker  # noqa: E402
-from app.domain.types import GpuUsage, ServerUsage  # noqa: E402
+from app.domain.types import DiskUsage, GpuUsage, ServerUsage  # noqa: E402
 from app.integrations.grafana import Datasource, Series  # noqa: E402
 from app.jobs.metrics import HEALTH_KEY  # noqa: E402
 from app.models import (  # noqa: E402
@@ -79,9 +79,10 @@ def _upgrade_head(url: str) -> None:
 MODELS = ("NVIDIA GeForce RTX 4080 SUPER", "NVIDIA GeForce RTX 5090", "NVIDIA GeForce RTX 4090")
 
 
-def _snapshots(cpu, ram, gpus):
+def _snapshots(cpu, ram, gpus, disks=(("/", 38.0),)):
     return [ServerUsage(NOW - timedelta(minutes=m), cpu, ram, tuple(GpuUsage(*g, i, MODELS[len(gpus) % len(MODELS)])
-                                                       for i, g in enumerate(gpus)))
+                                                       for i, g in enumerate(gpus)),
+                        tuple(DiskUsage(*d) for d in disks))
             for m in range(55, -1, -5)]
 
 
@@ -159,7 +160,8 @@ async def seed(db, store) -> dict:
         ("gpu-01", (18.0, 31.0, [(35.0, 40.0), (28.0, 30.0), (0.0, 1.0), (0.0, 1.0)])),
         ("gpu-02", (86.0, 71.0, [(97.0, 82.0), (91.0, 76.0)])),
         ("cpu-03", (7.0, 23.0, [])),
-        ("gpu-05", (2.0, 41.0, [(0.0, 12.0)])),
+        # A nearly full data disk: the card flags it, the bot lists it.
+        ("gpu-05", (2.0, 41.0, [(0.0, 12.0)], [("/", 41.0), ("/data", 96.0)])),
         ("gpu-08", (44.0, 63.0, [(88.0, 71.0)])),
     ):
         for snap in _snapshots(*args):

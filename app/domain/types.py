@@ -28,11 +28,21 @@ class GpuUsage:
 
 
 @dataclass(frozen=True)
+class DiskUsage:
+    mount: str  # mount point, e.g. "/" or "/data"
+    used_pct: float
+
+
+@dataclass(frozen=True)
 class ServerUsage:
     ts: datetime
     cpu_pct: float
     ram_pct: float
     gpus: tuple[GpuUsage, ...]
+    disks: tuple[DiskUsage, ...] = ()  # empty when the disk query is missing or failed
+
+    def disks_worst_first(self) -> list[DiskUsage]:
+        return sorted(self.disks, key=lambda d: (-d.used_pct, d.mount))
 
 
 @dataclass(frozen=True)

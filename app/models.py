@@ -118,7 +118,12 @@ class Booking(Base):
     idle_since: Mapped[datetime | None] = mapped_column(TS)
     idle_ram_baseline: Mapped[float | None] = mapped_column(Float)
     last_warning_at: Mapped[datetime | None] = mapped_column(TS)
-    spike_alerted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # RAM / disk "almost full" warnings already sent for this booking (re-armed when the value
+    # drops back), so they are not repeated every poll.
+    ram_alerted_at: Mapped[datetime | None] = mapped_column(TS)
+    disk_alerted: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
     start_reminder_sent: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
@@ -140,6 +145,9 @@ class MetricSnapshot(Base):
     cpu_pct: Mapped[float | None] = mapped_column(Float)
     ram_pct: Mapped[float | None] = mapped_column(Float)
     gpus: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    disks: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, default=list, server_default=text("'[]'::jsonb")
     )
 

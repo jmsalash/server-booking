@@ -38,8 +38,10 @@ TOPIC_POSTS = (
     ("reclaimed", "Reclaimed bookings"),
     ("freed", "Servers freed"),
 )
-QUERY_KEYS = ("cpu", "ram", "gpu_util", "gpu_mem", "discover_hosts", "discover_gpus")
+QUERY_KEYS = ("cpu", "ram", "gpu_util", "gpu_mem", "disk", "discover_hosts", "discover_gpus")
 QUERY_HELP = {
+    "disk": "Disk used % (per mount point): one series per mountpoint label. Optional — if it "
+            "fails or returns nothing, readings just have no disk data.",
     "discover_hosts": "Import from Grafana: one series per host, labelled instance (a :port "
                       "suffix is dropped).",
     "discover_gpus": "Import from Grafana: GPU count per host, labelled instance (a :port "
@@ -850,6 +852,8 @@ async def server_fetch(
             parts = [f"CPU {u.cpu_pct:.1f}%", f"RAM {u.ram_pct:.1f}%"]
             parts += [f"{g.label(i, len(u.gpus))}: util {g.util_pct:.1f}% mem {g.mem_pct:.1f}%"
                       for i, g in enumerate(u.gpus)]
+            parts.append("disks " + (", ".join(f"{d.mount} {d.used_pct:.1f}%" for d in u.disks)
+                                     if u.disks else "none reported"))
             text = ", ".join(parts)
     await record(db, user, "fetch_usage", f"server:{server.id}", {"ok": ok})
     await db.commit()
@@ -977,8 +981,8 @@ RULE_LABELS = {
     "idle_cpu_pct": "Idle: CPU below (%)",
     "idle_ram_delta_pp": "Idle: RAM change below (percentage points)",
     "max_idle_warnings": "Idle warnings before reclaim",
-    "spike_threshold_pct": "Shared machine: high-usage alert at (%)",
-    "spike_avg_min": "Shared machine: high-usage averaging (minutes)",
+    "ram_alert_pct": "Warn when RAM is at least (%)",
+    "disk_alert_pct": "Warn when a disk is at least (%)",
     "stale_after_min": "Metrics stale after (minutes)",
     "snapshot_retention_h": "Keep snapshots (hours)",
 }
@@ -987,7 +991,6 @@ RULE_MAX = {  # upper bounds keep timedelta arithmetic in the jobs from overflow
     "soon_window_min": 10080,
     "idle_window_min": 10080,
     "max_idle_warnings": 20,
-    "spike_avg_min": 10080,
     "stale_after_min": 10080,
     "snapshot_retention_h": 720,
 }

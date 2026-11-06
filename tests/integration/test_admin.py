@@ -236,6 +236,22 @@ async def test_fetch_usage_now(client, logged_in_admin, db, store, make_server, 
     assert "admin.fetch_usage" in await _actions(db)
     saved = await usage.latest(db, sid)  # the board shows it without waiting for the worker
     assert saved is not None and saved.cpu_pct == 12.5
+    assert "disks none reported" in r.text
+
+
+async def test_fetch_usage_now_lists_disks(client, logged_in_admin, db, store, make_server,
+                                           grafana):
+    grafana.series["node_filesystem"] = [Series({"mountpoint": "/data"}, 96.04),
+                                         Series({"mountpoint": "/"}, 41.0)]
+    s = await make_server(name="mon-2", kind="grafana")
+    await store.set(K.GRAFANA_URL, "http://grafana.lab")
+    await store.set(K.GRAFANA_DS_UID, "prom1")
+    await db.commit()
+    sid = s.id
+    r = await client.post(f"/admin/servers/{sid}/fetch")
+    assert "disks / 41.0%, /data 96.0%" in r.text
+    saved = await usage.latest(db, sid)
+    assert [(d.mount, d.used_pct) for d in saved.disks] == [("/", 41.0), ("/data", 96.04)]
 
 
 async def test_fetch_usage_error_sanitized(client, logged_in_admin, db, store, make_server,
@@ -580,6 +596,20 @@ async def test_rules_saved(client, logged_in_admin, db, store):
     assert (rules.max_booking_hours, rules.timezone, rules.idle_cpu_pct, rules.work_days) == (
         48, "Europe/London", 7.5, (0, 2))
     assert "admin.rules" in await _actions(db)
+
+
+async def test_rules_page_has_full_alert_fields(client, logged_in_admin, db, store):
+    r = await client.get("/admin/rules")
+    assert "Full RAM / disk alerts" in r.text and 'name="ram_alert_pct"' in r.text
+    assert 'name="disk_alert_pct"' in r.text and "spike" not in r.text
+    r = await client.post("/admin/rules", data=_rules_form(ram_alert_pct="80",
+                                                           disk_alert_pct="95.5"))
+    assert r.status_code == 303
+    db.expire_all()
+    rules = await store.get_rules()
+    assert (rules.ram_alert_pct, rules.disk_alert_pct) == (80.0, 95.5)
+    r = await client.post("/admin/rules", data=_rules_form(disk_alert_pct="101"))
+    assert r.status_code == 400
 
 
 # --- integrations ---------------------------------------------------------------------------

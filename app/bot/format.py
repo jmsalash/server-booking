@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from app.domain.status import LEGEND_TEXT, STATUS_EMOJI, format_day_hm, format_hm_or_day
-from app.domain.types import BookingView, StatusCode
+from app.domain.types import BookingView, DiskUsage, StatusCode
 from app.services.board import ServerCard
 
 FREE_CODES = (StatusCode.AVAILABLE, StatusCode.BOOKED_SOON, StatusCode.SHAREABLE)
@@ -90,12 +90,25 @@ def _usage_line(card: ServerCard) -> str:
     return " · ".join(parts)
 
 
+DETAIL_DISKS = 3
+
+
+def _disk_line(card: ServerCard) -> list[str]:
+    """`Disk: /data 96% · / 41%`, worst first, at most DETAIL_DISKS mounts."""
+    u = card.usage
+    if card.server.kind == "standalone" or card.pending or u is None or card.stale or not u.disks:
+        return []
+    worst = u.disks_worst_first()[:DETAIL_DISKS]
+    return ["Disk: " + " · ".join(f"{d.mount} {d.used_pct:.0f}%" for d in worst)]
+
+
 def server_detail(card: ServerCard, tz: str, portal_url: str, now: datetime) -> str:
     current = card.current
     lines = [_line(card, tz), *(_person(b, tz, now) for b in current), *_quiet(card, tz, now)]
     if card.status.code == StatusCode.SHAREABLE:
         lines.append(CAN_JOIN)
     lines.append(_usage_line(card))
+    lines += _disk_line(card)
     later = [b for b in card.upcoming if b.start > now][:DETAIL_NEXT]
     if later:
         lines.append("Next:")
@@ -120,3 +133,17 @@ def idle_warning(server_name: str, n: int, max_n: int, idle_min: int) -> str:
         f"⚠️ Your booking on {server_name} has been idle for {_duration(idle_min)}. "
         f"Warning {n}/{max_n} — after {max_n} warnings the booking is released."
     )
+
+
+def ram_full(server_name: str, pct: float) -> str:
+    return f"⚠️ {server_name}: RAM is {pct:.0f}% full. Your job may crash if it runs out."
+
+
+def disk_full(server_name: str, disks: Sequence[DiskUsage]) -> str:
+    if len(disks) == 1:
+        d = disks[0]
+        return (f"⚠️ {server_name}: disk {d.mount} is {d.used_pct:.0f}% full. "
+                "Free some space before it runs out.")
+    listed = ", ".join(f"{d.mount} {d.used_pct:.0f}%" for d in disks)
+    return (f"⚠️ {server_name}: disks are almost full: {listed}. "
+            "Free some space before they run out.")

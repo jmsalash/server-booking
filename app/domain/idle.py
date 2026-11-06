@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 
 from app.domain.rules import Rules
-from app.domain.share import is_stale
+from app.domain.readings import is_stale
 from app.domain.timeutil import in_working_hours, working_minutes
 from app.domain.types import ServerUsage
 

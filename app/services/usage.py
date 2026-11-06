@@ -3,8 +3,19 @@ from datetime import datetime
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.types import GpuUsage, ServerUsage
+from app.domain.types import DiskUsage, GpuUsage, ServerUsage
 from app.models import MetricSnapshot
+
+
+def _disks(raw) -> tuple[DiskUsage, ...]:
+    """Disks from a snapshot row; rows from before disks were stored have none."""
+    out = []
+    for d in raw if isinstance(raw, list) else []:
+        try:
+            out.append(DiskUsage(str(d["mount"]), float(d["used_pct"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return tuple(out)
 
 
 def _to_usage(row: MetricSnapshot) -> ServerUsage:
@@ -14,6 +25,7 @@ def _to_usage(row: MetricSnapshot) -> ServerUsage:
         ram_pct=row.ram_pct,
         gpus=tuple(GpuUsage(g["util_pct"], g["mem_pct"], g.get("index"), g.get("model"))
                    for g in (row.gpus or [])),
+        disks=_disks(row.disks),
     )
 
 
@@ -22,6 +34,7 @@ async def save_snapshot(db: AsyncSession, server_id: int, usage: ServerUsage) ->
         server_id=server_id, ts=usage.ts, cpu_pct=usage.cpu_pct, ram_pct=usage.ram_pct,
         gpus=[{"util_pct": g.util_pct, "mem_pct": g.mem_pct, "index": g.index, "model": g.model}
               for g in usage.gpus],
+        disks=[{"mount": d.mount, "used_pct": d.used_pct} for d in usage.disks],
     ))
     await db.flush()
 

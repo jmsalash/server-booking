@@ -55,8 +55,9 @@ The web UI listens on port 8000. The only configuration is `DATABASE_URL`
 5. Log in with Telegram as a group admin (see "Logging in" below).
 6. Grafana: enter the URL and a token (a read-only service-account token is
    preferred; user/password also works), press Test, then choose the datasource.
-   The default PromQL query templates target node_exporter (CPU, RAM, host
-   discovery) and the NVIDIA DCGM exporter (GPUs), all matched on the `instance`
+   The default PromQL query templates target node_exporter (CPU, RAM, disk used %
+   per mount point, host discovery) and the NVIDIA DCGM exporter (GPUs), all
+   matched on the `instance`
    label (e.g. `DCGM_FI_DEV_GPU_UTIL{instance=~"(?i){instance_re}(\\.[^:]*)?(:.*)?"}`).
    The instance matchers are case-insensitive and accept a domain suffix and a
    port, so a server stored as `gpu-01` matches `instance="GPU-01.lab:9100"`.
@@ -113,9 +114,12 @@ message when someone joins. At most two people are on a machine at any instant,
 and the one who joins can't open it to a third. Overlapping a booking that is
 not shareable is refused, for new bookings and extensions alike. The CPU only /
 CPU + GPU choice is shown on the board and in the bot so you can see what the
-other person uses; it is not enforced. While two people share a machine, both
-get a Telegram alert if its average CPU, RAM or GPU memory reaches 50 % over
-15 min (admin-editable).
+other person uses; it is not enforced.
+
+**Full RAM / disk.** Everyone with a booking running on a machine gets a
+Telegram warning (at any hour) when its RAM or a disk reaches 90 % (admin-editable;
+disks come from the optional `disk` query, one series per mount point); it is
+repeated only after the value has dropped 5 percentage points below and crossed again.
 
 **Idle reclaim.** If a booked server stays idle for 120 min (CPU < 10 %, GPU
 util < 5 % for CPU + GPU bookings, RAM change < 2 percentage points), the user

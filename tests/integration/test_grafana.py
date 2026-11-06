@@ -8,7 +8,7 @@ import respx
 
 from app.integrations.grafana import (
     DEFAULT_QUERIES, LEGACY_DEFAULT_QUERIES, NVIDIA_SMI_QUERIES, DiscoveredHost, GrafanaClient, GrafanaError,
-    MetricsUnavailable, Series, _expand, _gpu_key, discover_hosts, effective_queries, fetch_usage,
+    MetricsUnavailable, Series, _expand, parse_disks, _gpu_key, discover_hosts, effective_queries, fetch_usage,
 )
 
 BASE = "http://grafana.test"
@@ -291,7 +291,7 @@ async def test_discover_real_dcgm_series_by_instance():
 
 
 def test_instance_matchers_are_case_insensitive_and_domain_tolerant():
-    for k in ("cpu", "ram", "gpu_util", "gpu_mem"):
+    for k in ("cpu", "ram", "gpu_util", "gpu_mem", "disk"):
         assert "(?i){instance_re}" in DEFAULT_QUERIES[k], k
         q = _expand(DEFAULT_QUERIES[k], "rvp01-Cocaina")
         # PromQL text: the instance keeps its case, regex chars and the backslash are doubled.
@@ -383,3 +383,67 @@ async def test_discover_instance_label_case_mismatch_keeps_host_case():
         (GPUS_Q, [frame(2, {"instance": "rvp01-cocaina.lab:9835"})]),
     ])
     assert list(hosts) == [DiscoveredHost("rvp01-Cocaina", "rvp01-Cocaina", 2)]
+
+
+# --- disks ----------------------------------------------------------------------------------
+
+BASIC = [("node_cpu_seconds_total", [frame(12.5)]),
+         ("node_memory_MemAvailable_bytes", [frame(40.0)])]
+
+
+async def test_fetch_usage_reads_disks_per_mount():
+    seen = []
+    disks = [frame(96.0, {"mountpoint": "/data", "instance": "srv:9100"}),
+             frame(41.0, {"mountpoint": "/", "instance": "srv:9100"}),
+             frame(97.5, {"mountpoint": "/data", "instance": "srv"}),  # same mount, no port
+             frame(50.0, {"instance": "srv"})]                        # no mountpoint: skipped
+    side = by_query([*BASIC, ("node_filesystem_avail_bytes", disks)])
+
+    def spy(request):
+        import json
+        seen.append(json.loads(request.content)["queries"][0]["expr"])
+        return side(request)
+
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=spy)
+        u = await fetch_usage(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES, "srv", 0, NOW)
+    assert [(d.mount, d.used_pct) for d in u.disks] == [("/", 41.0), ("/data", 97.5)]
+    disk_q = next(e for e in seen if "node_filesystem" in e)
+    assert disk_q.count(r'instance=~"(?i)srv(\\.[^:]*)?(:.*)?"') == 2
+    assert 'fstype!~"tmpfs|devtmpfs|overlay|squashfs|ramfs|nsfs|fuse.*|efivarfs|autofs"' in disk_q
+    assert 'mountpoint!~"/boot.*|/snap/.*|/run.*|/var/lib/docker/.*"' in disk_q
+    assert "node_filesystem_size_bytes" in disk_q
+
+
+def test_parse_disks_clamps_and_sorts():
+    got = parse_disks([Series({"mountpoint": "/b"}, 120.0), Series({"mountpoint": "/a"}, -3.0)])
+    assert [(d.mount, d.used_pct) for d in got] == [("/a", 0.0), ("/b", 100.0)]
+
+
+async def test_disk_query_failure_keeps_usage():
+    def side(request):
+        import json
+        if "node_filesystem" in json.loads(request.content)["queries"][0]["expr"]:
+            return httpx.Response(500, text="boom")
+        return by_query(BASIC)(request)
+
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=side)
+        u = await fetch_usage(GrafanaClient(BASE, None, None, "t"), "p1", DEFAULT_QUERIES, "srv", 0, NOW)
+    assert (u.cpu_pct, u.ram_pct, u.disks) == (12.5, 40.0, ())
+
+
+async def test_no_disk_series_or_query_means_no_disks():
+    with respx.mock:
+        respx.post(f"{BASE}/api/ds/query").mock(side_effect=by_query(BASIC))
+        client = GrafanaClient(BASE, None, None, "t")
+        assert (await fetch_usage(client, "p1", DEFAULT_QUERIES, "srv", 0, NOW)).disks == ()
+        no_disk = {k: v for k, v in DEFAULT_QUERIES.items() if k != "disk"}
+        assert (await fetch_usage(client, "p1", no_disk, "srv", 0, NOW)).disks == ()
+
+
+def test_saved_queries_without_disk_get_the_default():
+    saved = {"cpu": "my_cpu", "ram": "my_ram"}  # saved before the disk query existed
+    assert effective_queries(saved)["disk"] == DEFAULT_QUERIES["disk"]
+    assert effective_queries({**saved, "disk": ""})["disk"] == DEFAULT_QUERIES["disk"]
+    assert effective_queries({"disk": "my_disk"})["disk"] == "my_disk"

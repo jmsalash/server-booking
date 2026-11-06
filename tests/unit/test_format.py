@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
 from app.bot.format import (
-    duration_text, free_list, idle_warning, server_detail, status_list,
+    disk_full, duration_text, free_list, idle_warning, ram_full, server_detail, status_list,
 )
 from app.domain.status import LEGEND_TEXT
 from app.domain.types import (
-    BookingView, GpuUsage, ServerInfo, ServerStatus, ServerUsage, StatusCode,
+    BookingView, DiskUsage, GpuUsage, ServerInfo, ServerStatus, ServerUsage, StatusCode,
 )
 from app.services.board import ServerCard
 
@@ -161,3 +161,25 @@ def test_duration_text():
     assert duration_text(45) == "45 min"
     assert duration_text(120) == "2 h"
     assert duration_text(135) == "2 h 15 min"
+
+
+def test_detail_disk_line_worst_first_max_three():
+    disks = tuple(DiskUsage(m, p) for m, p in
+                  (("/", 41.0), ("/data", 96.0), ("/home", 12.0), ("/scratch", 70.4)))
+    u = ServerUsage(NOW, 1.0, 2.0, (), disks)
+    text = server_detail(card(StatusCode.AVAILABLE, usage=u), TZ, URL, NOW)
+    assert "Disk: /data 96% · /scratch 70% · / 41%" in text and "/home" not in text
+    no_disks = server_detail(card(StatusCode.AVAILABLE, usage=ServerUsage(NOW, 1.0, 2.0, ())),
+                             TZ, URL, NOW)
+    assert "Disk:" not in no_disks
+    assert "Disk:" not in server_detail(card(StatusCode.AVAILABLE, usage=u, stale=True), TZ, URL,
+                                        NOW)
+
+
+def test_full_texts():
+    assert ram_full("gpu-05", 94.4) == (
+        "⚠️ gpu-05: RAM is 94% full. Your job may crash if it runs out.")
+    assert disk_full("gpu-05", [DiskUsage("/data", 96.0)]) == (
+        "⚠️ gpu-05: disk /data is 96% full. Free some space before it runs out.")
+    assert disk_full("gpu-05", [DiskUsage("/data", 96.0), DiskUsage("/", 91.0)]) == (
+        "⚠️ gpu-05: disks are almost full: /data 96%, / 91%. Free some space before they run out.")

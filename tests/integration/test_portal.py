@@ -115,6 +115,19 @@ async def test_usage_bars_for_fresh_metrics(client, logged_in, db, make_server):
     assert "CPU" in r.text and "37%" in r.text and "42%" in r.text
     assert "RTX 5090" in r.text and "VRAM" in r.text and "81%" in r.text and "64%" in r.text
     assert "usage: unknown" not in r.text
+    assert "bar__pct--warn" not in r.text and "usage__warn" not in r.text
+
+
+async def test_board_flags_nearly_full_ram_and_disk(client, logged_in, db, make_server):
+    from app.domain.types import DiskUsage
+    server = await make_server(name="mon-1", kind="grafana")
+    await usage.save_snapshot(db, server.id, ServerUsage(
+        NOW - timedelta(minutes=2), 37.0, 93.0, (),
+        (DiskUsage("/", 41.0), DiskUsage("/data", 96.2))))
+    await db.commit()
+    r = await client.get("/board/cards")
+    assert '<span class="bar__pct bar__pct--warn">93%</span>' in r.text
+    assert 'title="Disk /data is 96% full">Disk 96%</span>' in r.text
 
 
 async def test_monitoring_banner_when_all_stale(client, logged_in, db, make_server):
@@ -833,3 +846,4 @@ async def test_about_page_explains_bot_and_rules(client, logged_in, db, store):
     for text in ("/status@lab_booking_bot", "/free@lab_booking_bot", "/notify@lab_booking_bot gpu-05",
                  "14 days", "2 h", "Mon–Fri 09:00–19:00", "Join", 'href="/about"'):
         assert text in r.text, text
+    assert "Telegram warning if RAM or a disk on your machine passes 90%" in r.text

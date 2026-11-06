@@ -26,7 +26,7 @@
 <div class="page-head">
   <div>
     <h1>Rules</h1>
-    <p class="muted">Booking limits, working hours, idle detection and sharing thresholds.</p>
+    <p class="muted">Booking limits, working hours, idle detection and full RAM / disk alerts.</p>
   </div>
 </div>
 {% if errors %}
@@ -38,7 +38,7 @@
   ("Bookings", ["timezone", "max_booking_hours", "soon_window_min"]),
   ("Working hours", ["work_days", "work_start", "work_end"]),
   ("Idle detection", ["idle_window_min", "idle_gpu_util_pct", "idle_cpu_pct", "idle_ram_delta_pp", "max_idle_warnings"]),
-  ("Sharing", ["spike_threshold_pct", "spike_avg_min"]),
+  ("Full RAM / disk alerts", ["ram_alert_pct", "disk_alert_pct"]),
   ("Monitoring", ["stale_after_min", "snapshot_retention_h"]),
 ] %}
 <form method="post" action="/admin/rules" class="form form--wide">

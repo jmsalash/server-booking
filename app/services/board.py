@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain import share
+from app.domain.readings import is_stale
 from app.domain.idle import quiet_since
 from app.domain.rules import Rules
 from app.domain.status import compute_status
@@ -78,7 +78,7 @@ async def _card(
     status = compute_status(info, bookings, now, rules)
     if server.kind == "grafana":
         latest = await usage.latest(db, server.id)
-        stale = share.is_stale(latest.ts if latest else None, now, rules)
+        stale = is_stale(latest.ts if latest else None, now, rules)
         pending = latest is None and server.name not in failed
     else:
         latest, stale, pending = None, False, False

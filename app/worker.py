@@ -183,11 +183,11 @@ class Worker:
         return job
 
     async def metrics_and_idle(self) -> None:
-        # idle_check needs fresh snapshots, so it runs after the poll; spike_check last.
+        # Both checks need fresh snapshots, so they run after the poll.
         sm = self.sessionmaker
         await run_job("poll_metrics", self._poll, sm)
         await run_job("idle_check", self._store_job(monitor.idle_check), sm)
-        await run_job("spike_check", self._store_job(monitor.spike_check), sm)
+        await run_job("full_check", self._store_job(monitor.full_check), sm)
 
     def build_scheduler(self) -> AsyncIOScheduler:
         sm = self.sessionmaker
