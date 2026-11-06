@@ -99,19 +99,31 @@ The web UI listens on port 8000. The only configuration is `DATABASE_URL`
 
 In the admin area add each server with its name and the Grafana instance
 identifier(s) used by the query templates. Servers without metrics are still
-bookable but are never shareable or reclaimed.
+bookable (and can be shared) but are never reclaimed.
 
 ## Sharing and idle reclaim
 
-**Sharing.** A server that is booked but lightly used can be offered as
-shareable (yellow). Defaults: CPU, RAM and single-GPU memory each below 50 %,
-averaged over 60 min; a short-spike check averages 15 min. At most 2 bookings
-may overlap at any instant, and a shared booking must start in the current hour.
+**Sharing.** Sharing is chosen per booking by the person booking: tick
+"Others can share this machine with me" on the booking form (or use "Let others
+share" under My bookings, as long as nobody has joined yet). Someone else may
+then book an overlapping time — the board shows the machine purple ("In use —
+can share") with a **Join** button, and the booking form asks them to confirm
+("You'll be sharing gpu-01 with Ana from … to …"). The owner gets a Telegram
+message when someone joins. At most two people are on a machine at any instant,
+and the one who joins can't open it to a third. Overlapping a booking that is
+not shareable is refused, for new bookings and extensions alike. The CPU only /
+CPU + GPU choice is shown on the board and in the bot so you can see what the
+other person uses; it is not enforced. While two people share a machine, both
+get a Telegram alert if its average CPU, RAM or GPU memory reaches 50 % over
+15 min (admin-editable).
 
-**Idle reclaim.** If a booked server stays idle for 120 min (GPU util < 5 %,
-CPU < 10 %, RAM change < 2 percentage points; for multi-GPU servers an idle GPU
-is util < 5 % and memory < 10 %), the user is warned. After 3 warnings the
-booking is released. Metrics older than 15 min count as stale and snapshots are
+**Idle reclaim.** If a booked server stays idle for 120 min (CPU < 10 %, GPU
+util < 5 % for CPU + GPU bookings, RAM change < 2 percentage points), the user
+is warned. After 3 warnings the booking is released. On a shared machine
+quietness is judged for the whole machine (the GPU counts if either booking uses
+it): both people are warned, each with their own "I'm still using it" button,
+and only a booking that runs out of warnings is released — the other keeps the
+machine. Any activity resets both. Metrics older than 15 min count as stale and snapshots are
 kept 48 h.
 
 Other defaults (all editable by admins): max booking 14 days, "booked soon"
@@ -131,11 +143,11 @@ Login tokens expire after 5 min; sessions last 30 days.
 | orange | booked soon |
 | red | booked |
 | half red / half green | free soon |
-| light yellow | shareable |
+| purple | in use, one more person can join |
 | grey | unavailable |
 
 In Telegram: 🟢 available, 🟠 booked soon, 🔴 booked, 🔴➜🟢 free soon,
-🟡 shareable, ⚪ unavailable.
+🟣 shareable, ⚪ unavailable.
 
 **Bot commands.** `/status` lists all servers (`/status <server>` shows one in
 detail), `/free` lists servers that are free now, and `/notify <server>` asks

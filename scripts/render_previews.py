@@ -89,11 +89,12 @@ async def seed(db, store) -> dict:
     users = {n: User(telegram_id=1000 + i, display_name=n, username=u, is_admin=(i == 0),
                      dm_blocked=(n == "Dario Neri"))
              for i, (n, u) in enumerate((("Ana Rossi", "ana"), ("Bob Bianchi", "bob"),
-                                         ("Chiara Verdi", "chiara"), ("Dario Neri", None)))}
+                                         ("Chiara Verdi", "chiara"), ("Dario Neri", None),
+                                         ("Maria Francesca Delle Fontane", "mfdf")))}
     db.add_all(users.values())
     s = {
         "gpu-01": Server(name="gpu-01", hostname="gpu-01.lab", kind="grafana", has_gpu=True,
-                         gpu_count=4, shareable=True),
+                         gpu_count=4),
         "gpu-02": Server(name="gpu-02", hostname="gpu-02.lab", kind="grafana", has_gpu=True,
                          gpu_count=2),
         "cpu-03": Server(name="cpu-03", hostname="cpu-03.lab", kind="grafana"),
@@ -115,20 +116,31 @@ async def seed(db, store) -> dict:
     h = timedelta(hours=1)
     hour = NOW.replace(minute=0)
     bookings = [
+        # gpu-01: one shareable booking alone, so others may join.
         Booking(user_id=u["Bob Bianchi"].id, server_id=s["gpu-01"].id, start_at=hour - 2 * h,
-                end_at=hour + 5 * h, resource="cpu_gpu"),
+                end_at=hour + 5 * h, resource="cpu", shareable=True),
+        # gpu-02: a shared pair (Chiara let others in; Dario joined on CPU only).
         Booking(user_id=u["Chiara Verdi"].id, server_id=s["gpu-02"].id, start_at=hour - 3 * h,
-                end_at=hour + 2 * h, resource="cpu_gpu"),
+                end_at=hour + 2 * h, resource="cpu_gpu", shareable=True),
+        Booking(user_id=u["Dario Neri"].id, server_id=s["gpu-02"].id, start_at=hour - h,
+                end_at=hour + 26 * h, resource="cpu", is_shared=True),
         Booking(user_id=u["Dario Neri"].id, server_id=s["cpu-04"].id, start_at=hour + 2 * h,
                 end_at=hour + 6 * h, resource="cpu"),
         Booking(user_id=u["Ana Rossi"].id, server_id=s["gpu-05"].id, start_at=hour - h,
                 end_at=hour + 7 * h, resource="cpu_gpu", idle_warnings=2),
+        # Ana's own shareable booking that Bob has joined (My bookings shows him).
         Booking(user_id=u["Ana Rossi"].id, server_id=s["cpu-03"].id, start_at=hour + 23 * h,
-                end_at=hour + 27 * h, resource="cpu"),
+                end_at=hour + 27 * h, resource="cpu", shareable=True),
+        Booking(user_id=u["Bob Bianchi"].id, server_id=s["cpu-03"].id, start_at=hour + 24 * h,
+                end_at=hour + 26 * h, resource="cpu", is_shared=True),
         Booking(user_id=u["Ana Rossi"].id, server_id=s["gpu-01"].id, start_at=hour + 48 * h,
-                end_at=hour + 52 * h, resource="cpu_gpu", is_shared=True),
+                end_at=hour + 52 * h, resource="cpu_gpu"),
         Booking(user_id=u["Bob Bianchi"].id, server_id=s["gpu-01"].id, start_at=hour + 26 * h,
                 end_at=hour + 30 * h, resource="cpu"),
+        # Long display name on a 1-GPU server, to check ellipsis on the card.
+        Booking(user_id=u["Maria Francesca Delle Fontane"].id, server_id=s["gpu-08"].id,
+                start_at=hour - h,
+                end_at=hour + 30 * h, resource="cpu_gpu"),
         Booking(user_id=u["Chiara Verdi"].id, server_id=s["gpu-01"].id, start_at=hour + 72 * h,
                 end_at=hour + 80 * h, resource="cpu_gpu"),
         Booking(user_id=u["Bob Bianchi"].id, server_id=s["cpu-03"].id, start_at=hour - 30 * h,
@@ -148,6 +160,7 @@ async def seed(db, store) -> dict:
         ("gpu-02", (86.0, 71.0, [(97.0, 82.0), (91.0, 76.0)])),
         ("cpu-03", (7.0, 23.0, [])),
         ("gpu-05", (2.0, 41.0, [(0.0, 12.0)])),
+        ("gpu-08", (44.0, 63.0, [(88.0, 71.0)])),
     ):
         for snap in _snapshots(*args):
             await usage.save_snapshot(db, s[name].id, snap)
@@ -280,6 +293,7 @@ def main() -> None:
     if "--shots" in sys.argv:
         for name in written:
             screenshot(out / f"{name}.html", out / f"{name}.png", "1280,900")
+        screenshot(out / "board.html", out / "board-1280x800.png", "1280,800")
         # Headless Chrome lays out at least 500 px wide whatever --window-size says, so the
         # phone shots load the page in a 390 px iframe (its own viewport for media queries).
         for name in ("board", "book", "me"):
