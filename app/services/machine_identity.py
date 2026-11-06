@@ -90,16 +90,25 @@ class MachineIndex:
                 out |= self._addrs.get(k, set())
         return out
 
-    def find(self, keys: set[str], exclude_id: int | None = None,
-             use_addresses: bool = True) -> str | None:
-        """Name of an existing machine with a common key (or address), else None."""
+    def match(self, keys: set[str], exclude_id: int | None = None,
+              use_addresses: bool = True) -> tuple[int | None, str] | None:
+        """(id, name) of an existing machine with a common key (or address), else None.
+
+        The id is None for machines registered with add() earlier in the same batch.
+        """
         addrs = self.addresses(keys) if use_addresses else set()
         for mid, name, other in self._machines:
             if exclude_id is not None and mid == exclude_id:
                 continue
             if keys & other or (addrs and addrs & self.addresses(other)):
-                return name
+                return mid, name
         return None
+
+    def find(self, keys: set[str], exclude_id: int | None = None,
+             use_addresses: bool = True) -> str | None:
+        """Name of an existing machine with a common key (or address), else None."""
+        found = self.match(keys, exclude_id, use_addresses)
+        return found[1] if found else None
 
     def add(self, name: str, keys: set[str]) -> None:
         """Register a machine accepted earlier in the same batch."""

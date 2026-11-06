@@ -7,6 +7,7 @@
     <h1>Import servers from Grafana</h1>
   </div>
 </div>
+{% if notice %}<div class="alert alert--success" role="status">{{ notice }}</div>{% endif %}
 {% if not configured %}
 <div class="alert alert--info">Grafana is not configured. Set the Grafana URL and Prometheus datasource on the <a href="/admin/integrations">Integrations</a> page first.</div>
 {% elif error %}
@@ -21,6 +22,15 @@
   <p>Tick the hosts to add. They are added as Grafana-monitored, enabled servers. The GPU count comes from Grafana's GPU metrics; correct it here if needed.</p>
   <p class="muted small"><strong>Shareable</strong> allows a second booking while the current one uses less than half the machine (CPU, RAM and GPU, averaged over the last hour). Users are warned that resources are shared.</p>
 </section>
+{% if gpu_mismatches %}
+<section class="card">
+  <div class="card__head">
+    <p class="card__title">GPU counts differ</p>
+    <form method="post" action="/admin/servers/import/sync-gpus" class="inline"><button type="submit" class="btn btn--primary btn--sm">Update GPU counts</button></form>
+  </div>
+  <p class="muted small">{{ gpu_mismatches }} already-added server{{ " has" if gpu_mismatches == 1 else "s have" }} a different GPU count in Grafana. Updating sets each one to Grafana's count (and turns “Has GPU” on or off to match).</p>
+</section>
+{% endif %}
 <form method="post" action="/admin/servers/import">
   <div class="table-wrap">
     <table class="table">
@@ -31,7 +41,7 @@
         <td class="cell-center"><input type="checkbox" name="selected_{{ i }}" aria-label="Add {{ r.instance }}" {% if r.selected %}checked{% endif %} {% if r.exists %}disabled{% endif %}></td>
         <td><input name="name_{{ i }}" value="{{ r.name }}" aria-label="Name for {{ r.instance }}" {% if r.exists %}readonly{% endif %}></td>
         <td><input type="hidden" name="instance_{{ i }}" value="{{ r.instance }}"><code>{{ r.instance }}</code></td>
-        <td><input type="number" name="gpu_count_{{ i }}" value="{{ r.gpu_count }}" min="0" max="64" aria-label="GPUs on {{ r.instance }}" {% if r.exists %}readonly{% endif %}></td>
+        <td class="nowrap">{% if r.existing_id %}<input type="hidden" name="gpu_count_{{ i }}" value="{{ r.gpu_count }}">{% if r.gpu_known %}Grafana: {{ r.gpu_count }} GPU{{ "" if r.gpu_count|string == "1" else "s" }} · configured: {{ r.configured_gpus }}{% if r.gpu_mismatch %} <span class="badge badge--warn">GPU count differs</span>{% endif %}{% else %}configured: {{ r.configured_gpus }}{% endif %}{% else %}<input type="number" name="gpu_count_{{ i }}" value="{{ r.gpu_count }}" min="0" max="64" aria-label="GPUs on {{ r.instance }}" {% if r.exists %}readonly{% endif %}>{% endif %}</td>
         <td class="cell-center"><input type="checkbox" name="shareable_{{ i }}" aria-label="Shareable" {% if r.shareable %}checked{% endif %} {% if r.exists %}disabled{% endif %}></td>
         <td class="nowrap">{% if r.exists %}<span class="badge">Already added{% if r.existing %} as “{{ r.existing }}”{% endif %}</span>{% endif %}</td>
       </tr>

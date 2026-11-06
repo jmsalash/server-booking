@@ -1127,3 +1127,95 @@ async def test_bookings_of_deleted_servers_hidden_by_default(client, logged_in_a
     r = await client.get("/admin/bookings", params={"deleted": "1"})
     assert "gone-1" in r.text and '<span class="badge badge--danger">deleted</span>' in r.text
     assert "gone-1 (deleted)" in r.text  # in the server filter
+
+
+# --- import: Grafana GPU counts for already-added servers ------------------------------------
+
+
+async def test_import_page_shows_gpu_counts_of_added_servers(client, logged_in_admin, db, store,
+                                                            make_server, grafana):
+    # Grafana: gpu-01.lab 4 GPUs, cpu-02 0, old-03 0
+    await make_server(name="gpu-01", kind="grafana", grafana_instance="gpu-01.lab",
+                      has_gpu=True, gpu_count=2)
+    await make_server(name="CPU-02", kind="grafana", grafana_instance="cpu-02")
+    await _configure_grafana(db, store)
+    _discovered(grafana)
+    r = await client.get("/admin/servers/import")
+    assert "Grafana: 4 GPUs · configured: 2" in r.text
+    assert "Grafana: 0 GPUs · configured: 0" in r.text
+    assert r.text.count("GPU count differs") == 1
+    assert 'action="/admin/servers/import/sync-gpus"' in r.text
+
+
+async def test_import_page_no_sync_button_without_mismatch(client, logged_in_admin, db, store,
+                                                          make_server, grafana):
+    await make_server(name="gpu-01", kind="grafana", grafana_instance="gpu-01.lab",
+                      has_gpu=True, gpu_count=4)
+    await _configure_grafana(db, store)
+    _discovered(grafana)
+    r = await client.get("/admin/servers/import")
+    assert "Grafana: 4 GPUs · configured: 4" in r.text
+    assert "sync-gpus" not in r.text and "GPU count differs" not in r.text
+
+
+async def test_gpu_sync_updates_only_mismatched_live_servers(client, logged_in_admin, db, store,
+                                                            make_server, grafana):
+    gpu = await make_server(name="gpu-01", kind="grafana", grafana_instance="gpu-01.lab:9100",
+                            has_gpu=False, gpu_count=0, enabled=False)
+    cpu = await make_server(name="cpu-02", kind="grafana", grafana_instance="cpu-02",
+                            has_gpu=True, gpu_count=2)
+    same = await make_server(name="old-03", kind="grafana", grafana_instance="old-03")
+    gone = await make_server(name="gone", kind="grafana", grafana_instance="gpu-01.lab",
+                             archived_at=NOW, enabled=False)
+    ids = (gpu.id, cpu.id, same.id, gone.id)
+    await _configure_grafana(db, store)
+    _discovered(grafana)  # gpu-01.lab: 4, cpu-02: 0, old-03: 0
+    r = await client.post("/admin/servers/import/sync-gpus")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/admin/servers/import?gpu_synced=2"
+    db.expire_all()
+    got = {sid: ((s := await db.get(Server, sid)).has_gpu, s.gpu_count) for sid in ids}
+    assert got == {ids[0]: (True, 4), ids[1]: (False, 0), ids[2]: (False, 0),
+                   ids[3]: (False, 0)}
+    entry = await db.scalar(select(AuditLog).where(AuditLog.action == "admin.servers_gpu_sync"))
+    changes = {c["name"]: (c["from"], c["to"]) for c in entry.details["changes"]}
+    assert changes == {"gpu-01": (0, 4), "cpu-02": (2, 0)}
+    page = await client.get(r.headers["location"])
+    assert "Updated GPU counts for 2 servers." in page.text
+    assert "GPU count differs" not in page.text
+
+
+async def test_gpu_sync_with_grafana_down_changes_nothing(client, logged_in_admin, db, store,
+                                                         make_server, grafana):
+    s = await make_server(name="gpu-01", kind="grafana", grafana_instance="gpu-01.lab",
+                          has_gpu=True, gpu_count=2)
+    sid = s.id
+    await _configure_grafana(db, store)
+    await store.set(K.GRAFANA_PASSWORD, "hunter2", secret=True)
+    await db.commit()
+    grafana.fail = GrafanaError("ConnectError: http://admin:hunter2@grafana.lab refused")
+    r = await client.post("/admin/servers/import/sync-gpus")
+    assert r.status_code == 200
+    assert "Grafana query failed" in r.text and "hunter2" not in r.text
+    db.expire_all()
+    assert (await db.get(Server, sid)).gpu_count == 2
+    assert "admin.servers_gpu_sync" not in await _actions(db)
+
+
+async def test_gpu_sync_with_gpu_query_failing_changes_nothing(client, logged_in_admin, db,
+                                                              store, make_server, grafana):
+    s = await make_server(name="gpu-01", kind="grafana", grafana_instance="gpu-01.lab",
+                          has_gpu=True, gpu_count=2)
+    sid = s.id
+    await _configure_grafana(db, store)
+    _discovered(grafana, gpu=GrafanaError("HTTPStatusError: 500"))  # counts would all be 0
+    r = await client.get("/admin/servers/import")
+    assert "GPU count differs" not in r.text and "sync-gpus" not in r.text
+    r = await client.post("/admin/servers/import/sync-gpus")
+    assert r.status_code == 200 and "nothing was changed" in r.text
+    db.expire_all()
+    assert (await db.get(Server, sid)).gpu_count == 2
+
+
+async def test_gpu_sync_forbidden_for_members(client, logged_in_member, grafana):
+    assert (await client.post("/admin/servers/import/sync-gpus")).status_code == 403

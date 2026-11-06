@@ -564,12 +564,27 @@ async def _check_same_machine(
 # --- import from Grafana --------------------------------------------------------------------
 
 
+def _configured_gpus(server: Server) -> int:
+    return server.gpu_count if server.has_gpu else 0
+
+
 async def _mark_existing(request: Request, db: AsyncSession, rows: list[dict]) -> MachineIndex:
-    """Flag rows that are already a server (same machine, or — when not ticked — same name)."""
+    """Flag rows that are already a server (same machine, or — when not ticked — same name).
+
+    Rows that are the same machine as a server also get its id and configured GPU count, and
+    `gpu_mismatch` when Grafana's count (if it could be read: `gpu_known`) differs.
+    """
     index = await _machine_index(request, db, [machine_keys(r["instance"]) for r in rows])
-    names = {s.name.lower() for s in await inventory.list_servers(db)}
+    servers = {s.id: s for s in await inventory.list_servers(db)}
+    names = {s.name.lower() for s in servers.values()}
     for r in rows:
-        r["existing"] = index.find(machine_keys(r["instance"]))
+        found = index.match(machine_keys(r["instance"]))
+        server = servers.get(found[0]) if found else None
+        r["existing"] = found[1] if found else None
+        r["existing_id"] = server.id if server else None
+        r["configured_gpus"] = _configured_gpus(server) if server else None
+        r["gpu_mismatch"] = bool(server and r.get("gpu_known")
+                                 and str(r["gpu_count"]) != str(r["configured_gpus"]))
         r["exists"] = (r["existing"] is not None
                        or (not r.get("selected") and r["name"].lower() in names))
     return index
@@ -578,12 +593,35 @@ async def _mark_existing(request: Request, db: AsyncSession, rows: list[dict]) -
 def _render_import(
     request: Request, user: User, rows: list[dict] | None = None, *, configured: bool = True,
     error: str | None = None, gpu_note: str | None = None, form_error: str | None = None,
-    notes: list[str] | None = None, status: int = 200,
+    notes: list[str] | None = None, notice: str | None = None, status: int = 200,
 ) -> HTMLResponse:
     return render(request, "admin/servers_import.html", {
         "user": user, "section": "servers", "configured": configured, "rows": rows,
         "error": error, "gpu_note": gpu_note, "form_error": form_error, "notes": notes or [],
+        "notice": notice,
+        "gpu_mismatches": sum(1 for r in rows or [] if r.get("gpu_mismatch")),
     }, status)
+
+
+async def _discover(request: Request, store: SettingsStore):
+    """Run Grafana discovery (needs _grafana_ready).
+
+    Returns (hosts, error, gpu_error): hosts is None when discovery failed (error says why);
+    gpu_error describes why GPU counts could not be read (counts are then all 0).
+    """
+    password = await store.get(K.GRAFANA_PASSWORD)
+    token = await store.get(K.GRAFANA_TOKEN)
+    client = request.app.state.grafana_factory(
+        await store.get(K.GRAFANA_URL), await store.get(K.GRAFANA_USER), password, token)
+    queries = effective_queries(await store.get(K.GRAFANA_QUERIES))
+    try:
+        hosts = await discover_hosts(client, await store.get(K.GRAFANA_DS_UID), queries)
+    except Exception as e:  # noqa: BLE001 - shown to the admin
+        return None, f"Grafana query failed — {describe_error(e, (password, token))}", None
+    gpu_error = None
+    if hosts.gpu_error is not None:
+        gpu_error = describe_error(hosts.gpu_error, (password, token))
+    return hosts, None, gpu_error
 
 
 @router.get("/servers/import")
@@ -593,29 +631,58 @@ async def servers_import_page(
 ):
     if not await _grafana_ready(store):
         return _render_import(request, user, configured=False)
-    password = await store.get(K.GRAFANA_PASSWORD)
-    token = await store.get(K.GRAFANA_TOKEN)
-    client = request.app.state.grafana_factory(
-        await store.get(K.GRAFANA_URL), await store.get(K.GRAFANA_USER), password, token)
-    queries = effective_queries(await store.get(K.GRAFANA_QUERIES))
-    try:
-        hosts = await discover_hosts(client, await store.get(K.GRAFANA_DS_UID), queries)
-    except Exception as e:  # noqa: BLE001 - shown to the admin
-        error = f"Grafana query failed — {describe_error(e, (password, token))}"
+    hosts, error, gpu_error = await _discover(request, store)
+    if error is not None:
         return _render_import(request, user, error=error)
     notes = []
     if len(hosts) > MAX_IMPORT_ROWS:
         notes.append(f"Grafana returned {len(hosts)} hosts. Showing the first "
                      f"{MAX_IMPORT_ROWS} hosts; import them, then reload for the rest.")
+    gpu_known = gpu_error is None
     rows = [{"instance": h.instance, "name": h.name, "gpu_count": h.gpu_count,
-             "shareable": False, "selected": False, "errors": []}
+             "shareable": False, "selected": False, "errors": [], "gpu_known": gpu_known}
             for h in hosts[:MAX_IMPORT_ROWS]]
     await _mark_existing(request, db, rows)
     gpu_note = None
-    if hosts.gpu_error is not None:
-        gpu_note = ("GPU count could not be read — set it by hand. "
-                    f"({describe_error(hosts.gpu_error, (password, token))})")
-    return _render_import(request, user, rows, gpu_note=gpu_note, notes=notes)
+    if not gpu_known:
+        gpu_note = f"GPU count could not be read — set it by hand. ({gpu_error})"
+    notice = None
+    raw = request.query_params.get("gpu_synced", "")
+    if raw.isascii() and raw.isdigit() and 0 <= int(raw) <= MAX_IMPORT_ROWS:
+        n = int(raw)
+        notice = f"Updated GPU counts for {n} server{'' if n == 1 else 's'}."
+    return _render_import(request, user, rows, gpu_note=gpu_note, notes=notes, notice=notice)
+
+
+@router.post("/servers/import/sync-gpus")
+async def servers_import_sync_gpus(
+    request: Request, user: User = Depends(admin_gate),
+    db: AsyncSession = Depends(get_db), store: SettingsStore = Depends(get_store),
+):
+    """Set gpu_count/has_gpu of every live server Grafana reports a different GPU count for."""
+    if not await _grafana_ready(store):
+        return _render_import(request, user, configured=False)
+    hosts, error, gpu_error = await _discover(request, store)
+    if error is None and gpu_error is not None:
+        error = f"GPU counts could not be read from Grafana — nothing was changed. ({gpu_error})"
+    if error is not None:
+        return _render_import(request, user, error=error)
+    rows = [{"instance": h.instance, "name": h.name, "gpu_count": h.gpu_count,
+             "selected": False, "gpu_known": True} for h in hosts]
+    await _mark_existing(request, db, rows)
+    changes: list[dict] = []
+    done: set[int] = set()
+    for r in rows:
+        sid, new = r["existing_id"], r["gpu_count"]
+        if not r["gpu_mismatch"] or sid in done or not 0 <= new <= 64:
+            continue  # 64 is the form's limit; a larger count is left for the admin
+        done.add(sid)
+        server = await inventory.update_server(db, sid, gpu_count=new, has_gpu=new > 0)
+        changes.append({"server_id": sid, "name": server.name, "instance": r["instance"],
+                        "from": r["configured_gpus"], "to": new})
+    await record(db, user, "servers_gpu_sync", "servers", {"changes": changes})
+    await db.commit()
+    return redirect(f"/admin/servers/import?gpu_synced={len(changes)}")
 
 
 def _is_zero(raw: str) -> bool:
