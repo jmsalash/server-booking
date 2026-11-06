@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}About — Lab Servers{% endblock %}
+{% block content %}
+{% set at = ("@" ~ bot) if bot else "" %}
+<div class="page-head">
+  <div>
+    <h1>About</h1>
+    <p class="muted">The essentials in one minute.</p>
+  </div>
+</div>
+<div class="about">
+  <section class="card">
+    <h2>Booking</h2>
+    <ul>
+      <li>Book on the <a href="/book">Book</a> page, up to <strong>{{ max_booking }}</strong> at a time.</li>
+      <li>Extend, end or cancel from <a href="/me">My bookings</a> or straight from the board.</li>
+      <li>Bookings show up in the lab's Google Calendar.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>Telegram bot</h2>
+    <p class="muted">In the bookings topic{% if bot %}, or in a private chat with <a href="https://t.me/{{ bot }}">{{ at }}</a>{% endif %}.</p>
+    <table class="about__cmds">
+      <tr><td><code>/status{{ at }}</code></td><td>All machines and who is using them</td></tr>
+      <tr><td><code>/status{{ at }} gpu-05</code></td><td>One machine, incl. how long it has been quiet</td></tr>
+      <tr><td><code>/free{{ at }}</code></td><td>What is free right now</td></tr>
+      <tr><td><code>/notify{{ at }} gpu-05</code></td><td>Message me when it is free</td></tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Sharing</h2>
+    <ul>
+      <li>Tick <em>Others can share this machine with me</em> when booking to let one more person in.</li>
+      <li>Purple machines can be shared: press <strong>Join</strong>. Max two people.</li>
+      <li>You get a Telegram message when someone joins you.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>Idle machines</h2>
+    <ul>
+      <li>Quiet for <strong>{{ idle_window }}</strong> during working hours ({{ work }}) → Telegram warning with an <em>I'm still using it</em> button.</li>
+      <li>After <strong>{{ warnings }}</strong> warnings the booking is released for others.</li>
+      <li>Quiet = CPU under {{ idle_cpu }}% (and GPU under {{ idle_gpu }}% for CPU + GPU bookings). CPU-only bookings ignore the GPU.</li>
+    </ul>
+  </section>
+
+  <section class="card about__wide">
+    <h2>Colours</h2>
+    <ul class="about__legend">
+      {% for code, label, meaning in legend %}
+      <li><span class="dot dot--{{ code }}" aria-hidden="true"></span><strong>{{ label }}</strong> <span class="muted">{{ meaning }}</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

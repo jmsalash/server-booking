@@ -229,7 +229,7 @@ async def render(out: Path) -> list[str]:
             ids = data["servers"]
             transport = httpx.ASGITransport(app=web)
             pages = {
-                "board": "/", "book": f"/book?server_id={ids['gpu-01']}", "me": "/me",
+                "board": "/", "book": f"/book?server_id={ids['gpu-01']}", "me": "/me", "about": "/about",
                 "admin_servers": "/admin/servers", "server_edit": f"/admin/servers/{ids['gpu-01']}",
                 "server_new": "/admin/servers/new", "import": "/admin/servers/import",
                 "integrations": "/admin/integrations", "rules": "/admin/rules",

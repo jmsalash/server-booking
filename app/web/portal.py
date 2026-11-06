@@ -345,6 +345,40 @@ async def _render_me(
     }, status)
 
 
+DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _days(days: tuple[int, ...]) -> str:
+    """(0, 1, 2, 3, 4) -> "Mon–Fri"; anything else is listed."""
+    d = sorted(days)
+    if d and d == list(range(d[0], d[-1] + 1)) and len(d) > 2:
+        return f"{DAY_NAMES[d[0]]}–{DAY_NAMES[d[-1]]}"
+    return ", ".join(DAY_NAMES[i] for i in d)
+
+
+def _hours(minutes: int) -> str:
+    h, m = divmod(minutes, 60)
+    return f"{h} h {m} min" if h and m else (f"{h} h" if h else f"{m} min")
+
+
+@router.get("/about")
+async def about_page(
+    request: Request,
+    user: User = Depends(current_user),
+    store: SettingsStore = Depends(get_store),
+):
+    rules = await store.get_rules()
+    bot = await store.get(K.TG_BOT_USERNAME)
+    max_h = rules.max_booking_hours
+    return _render(request, "about.html", {
+        "user": user, "bot": bot, "legend": legend(rules), "tz": rules.timezone,
+        "max_booking": f"{max_h // 24} days" if max_h % 24 == 0 and max_h >= 48 else f"{max_h} h",
+        "idle_window": _hours(rules.idle_window_min), "warnings": rules.max_idle_warnings,
+        "work": f"{_days(rules.work_days)} {rules.work_start}–{rules.work_end}",
+        "idle_cpu": f"{rules.idle_cpu_pct:g}", "idle_gpu": f"{rules.idle_gpu_util_pct:g}",
+    })
+
+
 @router.get("/me")
 async def me_page(
     request: Request,

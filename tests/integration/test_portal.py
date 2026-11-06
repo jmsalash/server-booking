@@ -823,3 +823,13 @@ async def test_toggle_someone_elses_booking_forbidden(client, logged_in, db, mak
     r = await client.post(f"/bookings/{b.id}/shareable", data={"shareable": "1"})
     assert r.status_code == 403
     assert not (await _bookings(db, s.id))[0].shareable
+
+
+async def test_about_page_explains_bot_and_rules(client, logged_in, db, store):
+    await store.set(K.TG_BOT_USERNAME, "lab_booking_bot")
+    await db.commit()
+    r = await client.get("/about")
+    assert r.status_code == 200
+    for text in ("/status@lab_booking_bot", "/free@lab_booking_bot", "/notify@lab_booking_bot gpu-05",
+                 "14 days", "2 h", "Mon–Fri 09:00–19:00", "Join", 'href="/about"'):
+        assert text in r.text, text
