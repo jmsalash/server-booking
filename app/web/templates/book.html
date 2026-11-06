@@ -51,14 +51,22 @@
         </div>
         {% if selected and not selected.has_gpu %}<p class="help mt-2">{{ selected.name }} has no GPU.</p>{% endif %}
       </fieldset>
+      {% if not share_with %}
+      <div class="check-field">
+        <label class="check"><input type="checkbox" name="shareable" aria-describedby="book-share-help" {% if values.shareable %}checked{% endif %}> Others can share this machine with me</label>
+        <p class="help" id="book-share-help">One other person may book the same time. You'll get a Telegram message when they do.</p>
+      </div>
+      {% endif %}
       {% if share_with %}
       <input type="hidden" name="confirm_shared" value="1">
       <input type="hidden" name="warned_server_id" value="{{ warned.server_id }}">
       <input type="hidden" name="warned_start" value="{{ warned.start }}">
       <input type="hidden" name="warned_end" value="{{ warned.end }}">
       <div class="alert alert--warning" role="alert">
-        <p><strong>This server is in use by {{ share_with }}. Resources will be shared.</strong></p>
-        <p>You will share CPU, RAM and GPU with the current booking. Confirm to book anyway.</p>
+        {% for x in share_with %}
+        <p><strong>You'll be sharing {{ selected.name }} with {{ x.name }} from {{ x.start|day_hm(tz) }} to {{ x.end|day_hm(tz) }}.</strong> <span class="badge">{{ "CPU + GPU" if x.resource == "cpu_gpu" else "CPU" }}</span></p>
+        {% endfor %}
+        <p>CPU, RAM and GPU are shared, and nobody else can join while you share. Confirm to book anyway.</p>
         <div class="actions"><button type="submit" class="btn btn--primary">Book and share</button></div>
       </div>
       {% else %}
@@ -76,7 +84,7 @@
       {% for b in timeline %}
       <li>
         <span class="timeline__when">{{ b.start|day_hm(tz) }} – {{ b.end|day_hm(tz) }}</span>
-        <span class="timeline__who">{{ b.user_name }} <span class="badge">{{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}</span>{% if b.is_shared %} <span class="badge badge--shared">shared</span>{% endif %}</span>
+        <span class="timeline__who">{{ b.user_name }} <span class="badge">{{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}</span>{% if b.is_shared %} <span class="badge badge--shared">shared</span>{% endif %}{% if b.shareable %} <span class="badge badge--shareable">shareable</span>{% endif %}</span>
       </li>
       {% endfor %}
     </ul>

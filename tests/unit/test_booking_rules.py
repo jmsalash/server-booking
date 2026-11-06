@@ -19,12 +19,12 @@ def L(h: float):
     return parse_local(f"2026-11-10T{hh:02d}:00", TZ)
 
 
-def srv(shareable=False, has_gpu=True, enabled=True):
-    return ServerInfo(1, "s1", "grafana", has_gpu, 1 if has_gpu else 0, shareable, enabled)
+def srv(has_gpu=True, enabled=True):
+    return ServerInfo(1, "s1", "grafana", has_gpu, 1 if has_gpu else 0, enabled)
 
 
-def req(s, e, resource="gpu"):
-    return BookingRequest(L(s), L(e), resource)
+def req(s, e, resource="gpu", user_id=None):
+    return BookingRequest(L(s), L(e), resource, user_id)
 
 
 def req_at(s: str, e: str, resource="gpu"):
@@ -38,14 +38,16 @@ def req_days(s, days, extra_h=0, resource="gpu"):
     return BookingRequest(start, start + timedelta(days=days, hours=extra_h), resource)
 
 
-def b(s, e, user="bob", shared=False):
-    return BookingView(1, 1, user, 1, L(s), L(e), "gpu", shared)
+_ids = iter(range(1, 10_000))
 
 
-def v(r, existing=(), shareable=False, shareable_now=False, server=None):
-    return validate_booking(
-        r, list(existing), server or srv(shareable=shareable), shareable_now, NOW, R
-    )
+def b(s, e, user="bob", shared=False, shareable=False, user_id=1):
+    return BookingView(next(_ids), user_id, user, 1, L(s), L(e), "gpu", shared,
+                       shareable=shareable)
+
+
+def v(r, existing=(), server=None, paired=frozenset()):
+    return validate_booking(r, list(existing), server or srv(), NOW, R, paired)
 
 
 def test_ok_free_slot():
@@ -92,31 +94,52 @@ def test_adjacent_is_not_overlap():
     assert v(req(14, 16), existing=[b(10, 14)]).ok
 
 
-def test_shared_ok_when_shareable_now_and_starts_now():
-    r = v(req(12, 16), existing=[b(10, 14, user="ana")], shareable=True, shareable_now=True)
-    assert r.ok and r.is_shared and r.share_with == "ana"
+def test_join_shareable_booking():
+    ana = b(10, 14, user="ana", shareable=True)
+    r = v(req(12, 16), existing=[ana])
+    assert r.ok and r.is_shared and r.share_with == (ana,)
 
 
-def test_shared_future_rejected():
-    r = v(req(13, 16), existing=[b(10, 14)], shareable=True, shareable_now=True)
-    assert r.error == E.SHARE_MUST_START_NOW
+def test_join_future_shareable_booking():
+    r = v(req(15, 17), existing=[b(14, 20, shareable=True)])
+    assert r.ok and r.is_shared
 
 
-def test_overlap_with_future_booking_while_shareable_rejected():
-    r = v(req(12, 16), existing=[b(15, 18)], shareable=True, shareable_now=True)
-    assert r.error == E.SHARE_MUST_START_NOW
+def test_join_two_consecutive_shareable_bookings():
+    x, y = b(10, 14, shareable=True), b(14, 18, shareable=True)
+    r = v(req(13, 15), existing=[x, y])
+    assert r.ok and r.share_with == (x, y)
 
 
-def test_third_booking_rejected():
-    r = v(
-        req(12, 16),
-        existing=[b(10, 14), b(12, 14, shared=True)],
-        shareable=True,
-        shareable_now=True,
-    )
+def test_overlap_shareable_and_non_shareable_is_conflict():
+    r = v(req(13, 15), existing=[b(10, 14, shareable=True), b(14, 18)])
+    assert r.error == E.CONFLICT
+
+
+def test_third_person_refused():
+    r = v(req(12, 16), existing=[b(10, 14, shareable=True), b(12, 14, shared=True)])
     assert r.error == E.TOO_MANY_OVERLAPS
 
 
-def test_shareable_server_but_not_now_conflict():
-    r = v(req(12, 16), existing=[b(10, 14)], shareable=True, shareable_now=False)
+def test_partner_elsewhere_in_shareable_booking_does_not_block():
+    # Ana 10-18 shares 10-12 with Bob; joining 14-16 makes only two people at any time.
+    r = v(req(14, 16), existing=[b(10, 18, shareable=True), b(10, 12, shared=True)])
+    assert r.ok and r.is_shared
+
+
+def test_cannot_join_own_booking():
+    r = v(req(12, 16, user_id=7), existing=[b(10, 14, shareable=True, user_id=7)])
     assert r.error == E.CONFLICT
+
+
+def test_paired_booking_need_not_be_shareable():
+    partner = b(12, 16, shared=True)
+    r = v(req(12, 18), existing=[partner], paired=frozenset({partner.id}))
+    assert r.ok and r.is_shared and r.share_with == ()
+
+
+def test_paired_still_counts_towards_two():
+    partner = b(12, 18, shared=True)
+    r = v(req(12, 18), existing=[partner, b(15, 18, shareable=True)],
+          paired=frozenset({partner.id}))
+    assert r.error == E.TOO_MANY_OVERLAPS

@@ -42,7 +42,6 @@ class ServerInfo:
     kind: str
     has_gpu: bool
     gpu_count: int
-    shareable: bool
     enabled: bool
 
 
@@ -55,8 +54,9 @@ class BookingView:
     start: datetime
     end: datetime
     resource: str
-    is_shared: bool
+    is_shared: bool  # joined someone else's shareable booking (the partner)
     idle_warnings: int = 0
+    shareable: bool = False  # the booker lets one other person join
 
 
 class StatusCode(StrEnum):

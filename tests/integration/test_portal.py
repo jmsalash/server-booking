@@ -192,16 +192,15 @@ async def test_book_form_local_time_interpreted_in_rome(client, logged_in, db, m
 
 async def test_share_warning_then_confirm(client, logged_in, db, make_user, make_server):
     bob = await make_user(display_name="Bob")
-    s = await make_server(name="shr", kind="grafana", shareable=True)
-    await _add(db, bob, s, datetime(2026, 11, 9, 10, tzinfo=UTC), datetime(2026, 11, 9, 14, tzinfo=UTC))
-    for m in range(0, 60, 5):
-        await usage.save_snapshot(db, s.id, ServerUsage(NOW - timedelta(minutes=m), 20.0, 20.0, ()))
+    s = await make_server(name="shr", kind="grafana")
+    await _add(db, bob, s, datetime(2026, 11, 9, 10, tzinfo=UTC), datetime(2026, 11, 9, 14, tzinfo=UTC),
+               shareable=True)
     await db.commit()
     form = {"server_id": s.id, "start": "2026-11-09T11:00", "end": "2026-11-09T13:00",
             "resource": "cpu"}
     r = await client.post("/book", data=form)
     assert r.status_code == 200
-    assert "This server is in use by Bob. Resources will be shared." in r.text
+    assert "You'll be sharing shr with Bob from Mon 09 11:00 to Mon 09 13:00." in r.text
     assert 'name="confirm_shared" value="1"' in r.text
     assert len(await _bookings(db, s.id)) == 1
 
@@ -322,7 +321,7 @@ async def test_board_offers_own_booking_actions_not_watch(client, logged_in, db,
     r = await client.get("/board/cards")
     assert f'action="/bookings/{now_b.id}/end"' in r.text and "End booking" in r.text
     assert f'action="/watch/{running.id}"' not in r.text
-    assert f'action="/bookings/{later_b.id}/cancel"' in r.text and "Cancel booking" in r.text
+    assert f'action="/bookings/{later_b.id}/cancel"' in r.text and "Cancel mine" in r.text
     assert f'action="/watch/{others.id}"' in r.text
     assert f"/bookings/{bob_b.id}/" not in r.text
 
@@ -550,10 +549,9 @@ async def test_share_confirmation_void_when_values_changed(
     client, logged_in, db, make_user, make_server
 ):
     bob = await make_user(display_name="Bob")
-    s = await make_server(name="shr", kind="grafana", shareable=True)
-    await _add(db, bob, s, datetime(2026, 11, 9, 10, tzinfo=UTC), datetime(2026, 11, 9, 14, tzinfo=UTC))
-    for m in range(0, 60, 5):
-        await usage.save_snapshot(db, s.id, ServerUsage(NOW - timedelta(minutes=m), 20.0, 20.0, ()))
+    s = await make_server(name="shr", kind="grafana")
+    await _add(db, bob, s, datetime(2026, 11, 9, 10, tzinfo=UTC), datetime(2026, 11, 9, 14, tzinfo=UTC),
+               shareable=True)
     await db.commit()
     warned = {"confirm_shared": "1", "warned_server_id": str(s.id),
               "warned_start": "2026-11-09T11:00", "warned_end": "2026-11-09T13:00"}
@@ -561,13 +559,13 @@ async def test_share_confirmation_void_when_values_changed(
     r = await client.post("/book", data={"server_id": s.id, "start": "2026-11-09T11:00",
                                          "end": "2026-11-09T14:00", "resource": "cpu", **warned})
     assert r.status_code == 200
-    assert "This server is in use by Bob. Resources will be shared." in r.text
+    assert "You'll be sharing shr with Bob" in r.text
     assert 'name="warned_end" value="2026-11-09T14:00"' in r.text
     # confirm_shared alone (no warned values) is not enough either.
     r = await client.post("/book", data={"server_id": s.id, "start": "2026-11-09T11:00",
                                          "end": "2026-11-09T13:00", "resource": "cpu",
                                          "confirm_shared": "1"})
-    assert r.status_code == 200 and "Resources will be shared." in r.text
+    assert r.status_code == 200 and "sharing shr with Bob" in r.text
     assert len(await _bookings(db, s.id)) == 1
 
 
@@ -708,3 +706,120 @@ async def test_still_using_ended_booking_refused(client, logged_in, db, make_ser
     [row] = await _bookings(db, s.id)
     assert row.idle_warnings == 2
     assert (await client.post("/bookings/99999/still-using")).status_code == 404
+
+
+# --- per-booking sharing ----------------------------------------------------------------------
+
+
+def _slots(html: str, server_name: str) -> list[list[str]]:
+    """The card's Who · Uses · Until rows as lists of cell texts."""
+    card = html.split(f'<h2 class="server-card__name">{server_name}</h2>')[1].split("</article>")[0]
+    body = card.split('<table class="slots">')[1].split("</tbody>")[0].split("<tbody>")[1]
+    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S)
+    return [[re.sub(r"<[^>]+>", "", c).strip() for c in re.findall(r"<td[^>]*>(.*?)</td>", r, re.S)]
+            for r in rows]
+
+
+def _actions(html: str, server_name: str) -> str:
+    card = html.split(f'<h2 class="server-card__name">{server_name}</h2>')[1].split("</article>")[0]
+    return card.split('<div class="actions">')[1]
+
+
+async def test_card_free_and_next_booking_rows(client, logged_in, db, make_user, make_server):
+    bob = await make_user(display_name="Bob")
+    s1 = await make_server(name="free1")
+    s2 = await make_server(name="free2")
+    await _add(db, bob, s2, datetime(2026, 11, 10, 8, tzinfo=UTC), datetime(2026, 11, 10, 9, tzinfo=UTC))
+    await db.commit()
+    r = await client.get("/")
+    assert _slots(r.text, "free1") == [["Free now"], ["No upcoming bookings"]]
+    assert _slots(r.text, "free2") == [["Free now"], ["Next booking", "from Tue 10 09:00"]]
+
+
+async def test_card_shows_both_people_and_you(client, logged_in, db, make_user, make_server):
+    bob = await make_user(display_name="Bob Longname-Sharington")
+    s = await make_server(name="pair", has_gpu=True, gpu_count=1)
+    await _add(db, bob, s, datetime(2026, 11, 9, 9, tzinfo=UTC), datetime(2026, 11, 9, 16, tzinfo=UTC),
+               shareable=True)
+    await _add(db, logged_in, s, datetime(2026, 11, 9, 10, tzinfo=UTC),
+               datetime(2026, 11, 10, 12, tzinfo=UTC), is_shared=True, resource="cpu_gpu")
+    await db.commit()
+    r = await client.get("/")
+    assert _slots(r.text, "pair") == [
+        ["Bob Longname-Sharington", "CPU", "until 17:00"],
+        ["You", "CPU + GPU", "until Tue 10 13:00"],
+    ]
+    assert 'title="Bob Longname-Sharington"' in r.text
+    assert "can share" not in r.text.split('<h2 class="server-card__name">pair</h2>')[1].split("</article>")[0]
+    acts = _actions(r.text, "pair")
+    assert "Join" not in acts and "End booking" in acts and "Notify me" not in acts
+
+
+async def test_card_join_button_for_single_shareable_booking(client, logged_in, db, make_user,
+                                                             make_server):
+    bob = await make_user(display_name="Bob")
+    s = await make_server(name="shr")
+    await _add(db, bob, s, datetime(2026, 11, 9, 9, tzinfo=UTC), datetime(2026, 11, 9, 16, tzinfo=UTC),
+               shareable=True)
+    mine = await make_server(name="mine")
+    await _add(db, logged_in, mine, datetime(2026, 11, 9, 9, tzinfo=UTC),
+               datetime(2026, 11, 9, 16, tzinfo=UTC), shareable=True)
+    await db.commit()
+    r = await client.get("/")
+    assert _slots(r.text, "shr") == [["Bob", "CPU", "until 17:00"], ["No upcoming bookings"]]
+    acts = _actions(r.text, "shr")
+    assert ">Book</a>" in acts
+    assert (f'href="/book?server_id={s.id}&amp;start=2026-11-09T12%3A00&amp;end=2026-11-09T17%3A00"'
+            in acts)
+    assert ">Join</a>" in acts
+    assert "Join" not in _actions(r.text, "mine")  # never offered on your own booking
+    # The link prefills the booking form; booking it asks to confirm sharing.
+    page = await client.get(f"/book?server_id={s.id}&start=2026-11-09T12%3A00&end=2026-11-09T17%3A00")
+    assert 'value="2026-11-09T12:00"' in page.text and 'value="2026-11-09T17:00"' in page.text
+
+
+async def test_book_form_shareable_checkbox(client, logged_in, db, make_server):
+    s = await make_server(name="srv")
+    await db.commit()
+    page = await client.get(f"/book?server_id={s.id}")
+    assert "Others can share this machine with me" in page.text
+    r = await client.post("/book", data={"server_id": s.id, "start": "2026-11-10T15:00",
+                                         "end": "2026-11-10T17:00", "resource": "cpu",
+                                         "shareable": "on"})
+    assert r.status_code == 303
+    [b] = await _bookings(db, s.id)
+    assert b.shareable and not b.is_shared
+
+
+async def test_me_toggle_shareable_and_partner_name(client, logged_in, db, make_user, make_server):
+    bob = await make_user(display_name="Bob")
+    s = await make_server(name="srv")
+    alone = await _add(db, logged_in, s, datetime(2026, 11, 10, 9, tzinfo=UTC),
+                       datetime(2026, 11, 10, 11, tzinfo=UTC))
+    shared = await _add(db, logged_in, s, datetime(2026, 11, 11, 9, tzinfo=UTC),
+                        datetime(2026, 11, 11, 11, tzinfo=UTC), shareable=True)
+    await _add(db, bob, s, datetime(2026, 11, 11, 10, tzinfo=UTC),
+               datetime(2026, 11, 11, 12, tzinfo=UTC), is_shared=True)
+    await db.commit()
+    page = (await client.get("/me")).text
+    assert f'action="/bookings/{alone.id}/shareable"' in page
+    assert f'action="/bookings/{shared.id}/shareable"' not in page  # a partner is attached
+    assert "Shared with <strong>Bob</strong>" in page and ">Shareable</span>" in page
+    r = await client.post(f"/bookings/{alone.id}/shareable", data={"shareable": "1"})
+    assert r.status_code == 303
+    assert (await _bookings(db, s.id))[0].shareable
+    r = await client.post(f"/bookings/{shared.id}/shareable", data={"shareable": "0"})
+    assert r.status_code == 400 and "Sharing can" in r.text
+    assert (await _bookings(db, s.id))[1].shareable
+
+
+async def test_toggle_someone_elses_booking_forbidden(client, logged_in, db, make_user,
+                                                      make_server):
+    bob = await make_user()
+    s = await make_server()
+    b = await _add(db, bob, s, datetime(2026, 11, 10, 9, tzinfo=UTC),
+                   datetime(2026, 11, 10, 11, tzinfo=UTC))
+    await db.commit()
+    r = await client.post(f"/bookings/{b.id}/shareable", data={"shareable": "1"})
+    assert r.status_code == 403
+    assert not (await _bookings(db, s.id))[0].shareable

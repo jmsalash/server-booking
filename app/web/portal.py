@@ -38,8 +38,9 @@ ERROR_TEXT: dict[BookingError, str] = {
     BookingError.TOO_LONG: "Bookings can be at most {limit}.",
     BookingError.NO_GPU: "This server has no GPU — choose CPU only.",
     BookingError.CONFLICT: "That time overlaps another booking.",
-    BookingError.SHARE_MUST_START_NOW: "A shared booking must start now.",
-    BookingError.TOO_MANY_OVERLAPS: "This server is already shared by two bookings.",
+    BookingError.TOO_MANY_OVERLAPS: "Two people already share this server at that time.",
+    BookingError.SHARE_LOCKED: "Sharing can't be changed while the booking is shared with "
+                               "someone.",
 }
 
 RESOURCES = ("cpu", "cpu_gpu")
@@ -87,7 +88,7 @@ def legend(rules: Rules) -> list[tuple[str, str, str]]:
         StatusCode.BOOKED_SOON: f"Free now, but a booking starts within {soon}.",
         StatusCode.BOOKED: "In use by a booking.",
         StatusCode.FREE_SOON: f"In use, but free again within {soon}.",
-        StatusCode.SHAREABLE: "In use but lightly loaded — you can share it now.",
+        StatusCode.SHAREABLE: "In use, one more person can join.",
         StatusCode.UNAVAILABLE: "Disabled by an admin; not bookable.",
     }
     order = (StatusCode.AVAILABLE, StatusCode.BOOKED_SOON, StatusCode.BOOKED,
@@ -175,13 +176,25 @@ async def _board_ctx(db: AsyncSession, store: SettingsStore, user: User) -> dict
     # The viewer's own booking per server (running one first, else the next one), so the
     # card can offer "End my booking" / "Cancel my booking" instead of "Notify me when free".
     mine = {}
+    # "Join" links: a single running shareable booking that isn't the viewer's, prefilled with
+    # the usual default start (the next hour) up to that booking's end.
+    join = {}
+    local = templates.env.filters["local_input"]
     for c in cards:
         own = [b for b in c.upcoming if b.user_id == user.id]
         if own:
             b = own[0]
             mine[c.server.id] = {"booking": b, "running": b.start <= now}
+        if c.status.code == StatusCode.SHAREABLE and c.current[0].user_id != user.id:
+            end = c.current[0].end
+            start = floor_hour(now, rules.timezone) + timedelta(hours=1)
+            if start >= end:
+                start = floor_hour(now, rules.timezone)
+            join[c.server.id] = {"with": c.current[0], "start": local(start, rules.timezone),
+                                 "end": local(end, rules.timezone)}
     return {"user": user, "cards": cards, "tz": rules.timezone, "legend": legend(rules),
-            "monitoring_down": board.monitoring_down(cards), "mine": mine}
+            "monitoring_down": board.monitoring_down(cards), "mine": mine, "join": join,
+            "now": now}
 
 
 @router.get("/")
@@ -218,7 +231,7 @@ def _int(value) -> int | None:
 async def _render_book(
     request: Request, db: AsyncSession, store: SettingsStore, user: User,
     server_id: int | None, values: dict, status: int = 200,
-    error: str | None = None, share_with: str | None = None, warned: dict | None = None,
+    error: str | None = None, share_with: list[dict] | None = None, warned: dict | None = None,
 ) -> HTMLResponse:
     now = clock.utcnow()
     rules = await store.get_rules()
@@ -246,11 +259,18 @@ async def _render_book(
 async def book_page(
     request: Request,
     server_id: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
     store: SettingsStore = Depends(get_store),
 ):
-    return await _render_book(request, db, store, user, _int(server_id), {})
+    # Prefilled times (the board's "Join" link); ignored unless both parse.
+    tz = (await store.get_rules()).timezone
+    values = {}
+    if parse_form_dt(start, tz) is not None and parse_form_dt(end, tz) is not None:
+        values = {"start": start, "end": end}
+    return await _render_book(request, db, store, user, _int(server_id), values)
 
 
 def _share_confirmed(form, server_id: int, values: dict) -> bool:
@@ -272,6 +292,7 @@ async def book_submit(
 ):
     form = await request.form()
     values = {k: str(form.get(k, "")) for k in ("start", "end", "resource")}
+    values["shareable"] = form.get("shareable") == "on"
     server_id = _int(form.get("server_id"))
     rules = await store.get_rules()
     start = parse_form_dt(values["start"], rules.timezone)
@@ -285,12 +306,17 @@ async def book_submit(
         await booking.create_booking(
             db, store, user, server.id, start, end, values["resource"], clock.utcnow(),
             confirm_shared=_share_confirmed(form, server.id, values),
+            shareable=values["shareable"],
         )
     except booking.ShareConfirmationRequired as e:
         await _rollback(db, user)
         warned = {"server_id": str(server_id), "start": values["start"], "end": values["end"]}
+        # The times each person is actually shared with: the overlap of the two bookings.
+        share_with = [{"name": x.user_name, "resource": x.resource,
+                       "start": max(start, x.start), "end": min(end, x.end)}
+                      for x in e.share_with]
         return await _render_book(request, db, store, user, server_id, values,
-                                  share_with=e.share_with, warned=warned)
+                                  share_with=share_with, warned=warned)
     except booking.BookingRejected as e:
         await _rollback(db, user)
         return await _render_book(request, db, store, user, server_id, values, 400,
@@ -309,8 +335,10 @@ async def _render_me(
     now = clock.utcnow()
     rules = await store.get_rules()
     names = dict((await db.execute(select(Server.id, Server.name))).all())
+    bookings = await booking.user_bookings(db, user.id, now)
     return _render(request, "me.html", {
-        "user": user, "bookings": await booking.user_bookings(db, user.id, now),
+        "user": user, "bookings": bookings,
+        "partners": await booking.partners(db, bookings, now),
         "subs": await watchlist.for_user(db, user.id), "names": names, "now": now,
         "tz": rules.timezone, "error": error, "notice": notice,
         "max_idle": rules.max_idle_warnings,
@@ -379,6 +407,28 @@ async def still_using(
         return await _render_me(request, db, store, user, 400, STILL_USING_REFUSED)
     await db.commit()
     return await _render_me(request, db, store, user, notice="Idle counter reset.")
+
+
+@router.post("/bookings/{booking_id}/shareable")
+async def set_shareable(
+    request: Request,
+    booking_id: int,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    store: SettingsStore = Depends(get_store),
+):
+    form = await request.form()
+    on = form.get("shareable") == "1"
+    rules = await store.get_rules()
+    try:
+        await booking.set_shareable(db, check_id(booking_id), user, on, clock.utcnow())
+    except booking.BookingRejected as e:
+        await _rollback(db, user)
+        msg = "That booking has ended." if e.error == BookingError.IN_PAST else error_text(
+            e.error, rules)
+        return await _render_me(request, db, store, user, 400, msg)
+    await db.commit()
+    return _redirect("/me")
 
 
 @router.post("/bookings/{booking_id}/extend")

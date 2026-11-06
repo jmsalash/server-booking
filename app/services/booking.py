@@ -24,14 +24,34 @@ class BookingRejected(Exception):
 
 
 class ShareConfirmationRequired(Exception):
-    def __init__(self, share_with: str):
-        super().__init__(f"booking would be shared with {share_with}")
+    """The booking would join these shareable bookings; ask the booker to confirm first."""
+
+    def __init__(self, share_with: tuple[BookingView, ...]):
+        super().__init__("booking would be shared with "
+                         + ", ".join(b.user_name for b in share_with))
         self.share_with = share_with
 
 
-def _span(b: Booking, rules: Rules) -> str:
+def _fmt_span(start: datetime, end: datetime, rules: Rules) -> str:
     tz = rules.timezone
-    return f"{format_day_hm(b.start_at, tz)}–{format_day_hm(b.end_at, tz)}"
+    return f"{format_day_hm(start, tz)}–{format_day_hm(end, tz)}"
+
+
+def _span(b: Booking, rules: Rules) -> str:
+    return _fmt_span(b.start_at, b.end_at, rules)
+
+
+async def _tell_joined(
+    db: AsyncSession, joiner: User, server: Server, start: datetime, end: datetime,
+    joined: tuple[BookingView, ...], now: datetime, rules: Rules,
+) -> None:
+    """DM the owner of each shareable booking someone has just joined."""
+    for x in joined:
+        owner = await db.get(User, x.user_id)
+        span = _fmt_span(max(start, x.start), min(end, x.end), rules)
+        await notify.dm(
+            db, owner, f"🤝 {joiner.display_name} will share {server.name} with you {span}.", now
+        )
 
 
 def _target(b: Booking) -> str:
@@ -93,7 +113,10 @@ async def create_booking(
     resource: str,
     now: datetime,
     confirm_shared: bool = False,
+    shareable: bool = False,
 ) -> Booking:
+    """Book a server. Overlapping shareable bookings is allowed (the new one is the partner,
+    never itself shareable) once the booker confirms; any other overlap is rejected."""
     if not user.active:
         raise PermissionError(f"user {user.id} is inactive")
     rules = await store.get_rules()
@@ -101,9 +124,8 @@ async def create_booking(
     if server.archived_at is not None:
         raise LookupError(f"server {server_id} not found")
     existing = await board.active_bookings(db, server_id, now)
-    shareable = await board.shareable_now(db, server, now, rules)
     v = validate_booking(
-        BookingRequest(start, end, resource), existing, to_info(server), shareable, now, rules
+        BookingRequest(start, end, resource, user.id), existing, to_info(server), now, rules
     )
     if not v.ok:
         raise BookingRejected(v.error)
@@ -113,8 +135,10 @@ async def create_booking(
     b = Booking(
         user_id=user.id, server_id=server_id, start_at=start, end_at=end,
         resource=resource, status="active", is_shared=v.is_shared,
+        shareable=shareable and not v.is_shared,  # at most two people
     )
     await _flush_or_conflict(db, add=b)
+    await _tell_joined(db, user, server, start, end, v.share_with, now, rules)
 
     await calendar_sync.queue_create(db, store, b.id, now)
     text = f"🔴 {server.name} booked by {user.display_name}, {_span(b, rules)}"
@@ -124,7 +148,8 @@ async def create_booking(
     await audit.record(
         db, "booking.create", _target(b), now=now, actor_user_id=user.id,
         details={"server_id": server_id, "start": start.isoformat(), "end": end.isoformat(),
-                 "resource": resource, "is_shared": b.is_shared},
+                 "resource": resource, "is_shared": b.is_shared, "shareable": b.shareable,
+                 "shared_with": [x.id for x in v.share_with]},
     )
     return b
 
@@ -244,31 +269,38 @@ async def extend(
     if new_end - b.start_at > timedelta(hours=rules.max_booking_hours):
         raise BookingRejected(BookingError.TOO_LONG)
     req_start = max(b.start_at, floor_hour(now, rules.timezone))
-    # An existing share pair (either side shared, already overlapping) stays accepted; any
-    # other overlap is a CONFLICT — extending never creates a new share.
-    existing = [
-        x for x in await board.active_bookings(db, b.server_id, now)
-        if x.id != b.id
-        and not ((x.is_shared or b.is_shared) and x.start < b.end_at and b.start_at < x.end)
-    ]
+    # The same rules as a new booking: the extension may run into shareable bookings (this one
+    # then joins them as their partner) but never into a non-shareable one, and never makes
+    # three people. A partner it already shares with stays accepted.
+    existing = [x for x in await board.active_bookings(db, b.server_id, now) if x.id != b.id]
+    paired = frozenset(
+        x.id for x in existing
+        if (x.is_shared or b.is_shared) and x.start < b.end_at and b.start_at < x.end
+    )
     v = validate_booking(
-        BookingRequest(req_start, new_end, b.resource), existing, to_info(server),
-        False, now, rules,
+        BookingRequest(req_start, new_end, b.resource, b.user_id), existing, to_info(server),
+        now, rules, paired,
     )
     if not v.ok:
         raise BookingRejected(v.error)
-    old_end, old_reminded = b.end_at, b.end_reminder_sent
+    old = (b.end_at, b.end_reminder_sent, b.is_shared, b.shareable)
     b.end_at = new_end
     b.end_reminder_sent = False  # re-arm the end reminder for the new end
+    if v.share_with:
+        b.is_shared, b.shareable = True, False
     try:
         await _flush_or_conflict(db)
     except BookingRejected:
-        b.end_at, b.end_reminder_sent = old_end, old_reminded
+        b.end_at, b.end_reminder_sent, b.is_shared, b.shareable = old
         raise
+    if v.share_with:
+        owner = await db.get(User, b.user_id)
+        await _tell_joined(db, owner, server, old[0], new_end, v.share_with, now, rules)
     await calendar_sync.queue_update(db, store, b.id, now)
     await audit.record(
         db, "booking.extend", _target(b), now=now, actor_user_id=actor.id,
-        details={"old_end": old_end.isoformat(), "new_end": new_end.isoformat()},
+        details={"old_end": old[0].isoformat(), "new_end": new_end.isoformat(),
+                 "shared_with": [x.id for x in v.share_with]},
     )
 
 
@@ -296,6 +328,36 @@ async def reclaim(db: AsyncSession, store: SettingsStore, booking_id: int, now: 
         now,
     )
     await audit.record(db, "booking.reclaim", _target(b), now=now, details={"idle_warnings": n})
+
+
+async def set_shareable(
+    db: AsyncSession, booking_id: int, actor: User, shareable: bool, now: datetime
+) -> bool:
+    """Let others join this booking (or stop letting them). Returns whether it changed.
+
+    Refused (SHARE_LOCKED) while the booking is shared: a partner can't open it to a third
+    person, and the owner can't take the place back from someone already in it.
+    """
+    current = await db.get(Booking, booking_id)
+    if current is None:
+        raise LookupError(f"booking {booking_id} not found")
+    await _lock_server(db, current.server_id)  # serialise with joins
+    b = await _lock_booking(db, booking_id)
+    _check_actor(b, actor)
+    if b.status != "active" or b.end_at <= now:
+        raise BookingRejected(BookingError.IN_PAST)
+    if b.shareable == shareable:
+        return False
+    others = await board.active_bookings(db, b.server_id, now)
+    if b.is_shared or board.overlapping(board.to_view(b, ""), others):
+        raise BookingRejected(BookingError.SHARE_LOCKED)
+    b.shareable = shareable
+    await db.flush()
+    await audit.record(
+        db, "booking.shareable", _target(b), now=now, actor_user_id=actor.id,
+        details={"shareable": shareable},
+    )
+    return True
 
 
 async def acknowledge_still_using(
@@ -329,3 +391,16 @@ async def user_bookings(db: AsyncSession, user_id: int, now: datetime) -> list[B
         .order_by(Booking.start_at, Booking.id)
     )
     return [board.to_view(b, name) for b, name in rows.all()]
+
+
+async def partners(
+    db: AsyncSession, bookings: list[BookingView], now: datetime
+) -> dict[int, list[BookingView]]:
+    """For each booking, the other active bookings it shares the machine with."""
+    by_server: dict[int, list[BookingView]] = {}
+    out: dict[int, list[BookingView]] = {}
+    for b in bookings:
+        if b.server_id not in by_server:
+            by_server[b.server_id] = await board.active_bookings(db, b.server_id, now)
+        out[b.id] = board.overlapping(b, by_server[b.server_id])
+    return out

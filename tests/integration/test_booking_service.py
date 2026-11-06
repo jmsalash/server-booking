@@ -5,9 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from app.domain.booking_rules import BookingError
-from app.domain.types import ServerUsage
 from app.models import AuditLog, Booking, OutboxItem, Server, User
-from app.services import usage
 from app.services.booking import (
     BookingRejected,
     ShareConfirmationRequired,
@@ -17,6 +15,7 @@ from app.services.booking import (
     end_early,
     extend,
     reclaim,
+    set_shareable,
     user_bookings,
 )
 from app.settings_store import K, SettingsStore
@@ -58,11 +57,6 @@ async def _add(db, user, server, start, end, **kw):
     db.add(b)
     await db.flush()
     return b
-
-
-async def _fresh_low_usage(db, server, now=NOW, pct=20.0):
-    for m in range(0, 60, 5):
-        await usage.save_snapshot(db, server.id, ServerUsage(now - timedelta(minutes=m), pct, pct, ()))
 
 
 async def test_create_ok_queues_calendar_and_topic(db, store, make_user, make_server):
@@ -108,29 +102,57 @@ async def test_conflict_rejected(db, store, make_user, make_server):
 async def test_share_needs_confirmation_then_succeeds(db, store, make_user, make_server):
     await _configure(store)
     ana, bob = await make_user(display_name="ana"), await make_user(display_name="bob")
-    server = await make_server(name="srv", kind="grafana", shareable=True)
-    await _add(db, ana, server, at(11), at(16))
-    await _fresh_low_usage(db, server)
+    server = await make_server(name="srv", kind="grafana")
+    a = await _add(db, ana, server, at(11), at(16), shareable=True)
     with pytest.raises(ShareConfirmationRequired) as e:
-        await create_booking(db, store, bob, server.id, at(12), at(14), "cpu", NOW,
+        await create_booking(db, store, bob, server.id, at(12), at(18), "cpu", NOW,
                              confirm_shared=False)
-    assert e.value.share_with == "ana"
+    assert [x.id for x in e.value.share_with] == [a.id]
     assert await _items(db) == []
-    b = await create_booking(db, store, bob, server.id, at(12), at(14), "cpu", NOW,
-                             confirm_shared=True)
-    assert b.is_shared
-    assert await _texts(db) == [(GROUP, "🔴 srv booked by bob, Thu 05 13:00–Thu 05 15:00 (shared)")]
+    b = await create_booking(db, store, bob, server.id, at(12), at(18), "cpu", NOW,
+                             confirm_shared=True, shareable=True)
+    assert b.is_shared and not b.shareable  # a partner never opens it to a third person
+    assert await _texts(db) == [
+        (ana.telegram_id, "🤝 bob will share srv with you Thu 05 13:00–Thu 05 17:00."),
+        (GROUP, "🔴 srv booked by bob, Thu 05 13:00–Thu 05 19:00 (shared)"),
+    ]
+    assert len(await _items(db, "calendar_create")) == 1  # the joiner's own event
+    [entry] = [x for x in await _audit(db) if x.action == "booking.create"]
+    assert entry.details["shared_with"] == [a.id] and entry.details["shareable"] is False
 
 
-async def test_share_refused_when_metrics_stale(db, store, make_user, make_server):
-    ana, bob = await make_user(display_name="ana"), await make_user()
-    server = await make_server(kind="grafana", shareable=True)
+async def test_create_shareable_booking(db, store, make_user, make_server):
+    ana = await make_user()
+    server = await make_server()
+    b = await create_booking(db, store, ana, server.id, at(14), at(18), "cpu", NOW,
+                             shareable=True)
+    assert b.shareable and not b.is_shared
+
+
+async def test_overlap_non_shareable_is_conflict_even_confirmed(db, store, make_user,
+                                                                make_server):
+    ana, bob = await make_user(), await make_user()
+    server = await make_server()
     await _add(db, ana, server, at(11), at(16))
-    await _fresh_low_usage(db, server, now=NOW - timedelta(minutes=30))
     with pytest.raises(BookingRejected) as e:
         await create_booking(db, store, bob, server.id, at(12), at(14), "cpu", NOW,
                              confirm_shared=True)
     assert e.value.error == BookingError.CONFLICT
+
+
+async def test_third_person_refused(db, store, make_user, make_server):
+    ana, bob, cy = await make_user(), await make_user(), await make_user()
+    server = await make_server()
+    await _add(db, ana, server, at(11), at(18), shareable=True)
+    await _add(db, bob, server, at(12), at(15), is_shared=True)
+    with pytest.raises(BookingRejected) as e:
+        await create_booking(db, store, cy, server.id, at(14), at(16), "cpu", NOW,
+                             confirm_shared=True)
+    assert e.value.error == BookingError.TOO_MANY_OVERLAPS
+    # After Bob leaves at 15:00 there is room again.
+    b = await create_booking(db, store, cy, server.id, at(15), at(17), "cpu", NOW,
+                             confirm_shared=True)
+    assert b.is_shared
 
 
 async def test_concurrent_creates_only_one_wins(sessionmaker, box):
@@ -307,8 +329,8 @@ async def test_extend_into_other_booking_conflicts(db, store, make_user, make_se
 
 async def test_extend_keeps_existing_share_pair(db, store, make_user, make_server):
     ana, bob, cy = await make_user(), await make_user(), await make_user()
-    server = await make_server(kind="grafana", shareable=True)
-    a = await _add(db, ana, server, at(11), at(18))
+    server = await make_server(kind="grafana")
+    a = await _add(db, ana, server, at(11), at(18), shareable=True)
     b = await _add(db, bob, server, at(12), at(14), is_shared=True)
     await _add(db, cy, server, at(20), at(22))
     await extend(db, store, a.id, ana, at(19), NOW)
@@ -317,6 +339,56 @@ async def test_extend_keeps_existing_share_pair(db, store, make_user, make_serve
     with pytest.raises(BookingRejected) as e:  # new overlap with a third booking
         await extend(db, store, b.id, bob, at(21), NOW)
     assert e.value.error == BookingError.CONFLICT
+
+
+async def test_extend_into_shareable_booking_joins_it(db, store, make_user, make_server):
+    ana, bob = await make_user(display_name="ana"), await make_user(display_name="bob")
+    server = await make_server(name="srv")
+    b = await _add(db, bob, server, at(14), at(16), shareable=True)
+    a = await _add(db, ana, server, at(16), at(20), shareable=True)
+    await extend(db, store, b.id, bob, at(18), NOW)
+    assert (b.end_at, b.is_shared, b.shareable) == (at(18), True, False)
+    assert (ana.telegram_id, "🤝 bob will share srv with you Thu 05 17:00–Thu 05 19:00.") in (
+        await _texts(db))
+    assert a.shareable
+
+
+async def test_extend_cannot_make_three_people(db, store, make_user, make_server):
+    ana, bob, cy = await make_user(), await make_user(), await make_user()
+    server = await make_server()
+    c = await _add(db, cy, server, at(14), at(16))
+    await _add(db, ana, server, at(16), at(20), shareable=True)
+    await _add(db, bob, server, at(17), at(19), is_shared=True)
+    with pytest.raises(BookingRejected) as e:
+        await extend(db, store, c.id, cy, at(18), NOW)
+    assert e.value.error == BookingError.TOO_MANY_OVERLAPS
+    assert c.end_at == at(16) and not c.is_shared
+
+
+async def test_set_shareable_toggles_and_audits(db, store, make_user, make_server):
+    ana = await make_user()
+    server = await make_server()
+    b = await _add(db, ana, server, at(14), at(18))
+    assert await set_shareable(db, b.id, ana, True, NOW) is True
+    assert b.shareable
+    assert await set_shareable(db, b.id, ana, True, NOW) is False
+    await set_shareable(db, b.id, ana, False, NOW)
+    assert not b.shareable
+    assert [x.details for x in await _audit(db) if x.action == "booking.shareable"] == [
+        {"shareable": True}, {"shareable": False}]
+
+
+async def test_set_shareable_refused_once_shared(db, store, make_user, make_server):
+    ana, bob, cy = await make_user(), await make_user(), await make_user()
+    server = await make_server()
+    a = await _add(db, ana, server, at(14), at(18), shareable=True)
+    b = await _add(db, bob, server, at(15), at(16), is_shared=True)
+    for booking, user, on in ((a, ana, False), (b, bob, True)):
+        with pytest.raises(BookingRejected) as e:
+            await set_shareable(db, booking.id, user, on, NOW)
+        assert e.value.error == BookingError.SHARE_LOCKED
+    with pytest.raises(PermissionError):
+        await set_shareable(db, a.id, cy, False, NOW)
 
 
 async def test_extend_must_be_later_and_aligned(db, store, make_user, make_server):

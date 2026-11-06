@@ -17,17 +17,18 @@ RULES = Rules()
 
 
 def server(enabled=True):
-    return ServerInfo(1, "srv", "standalone", False, 0, False, enabled)
+    return ServerInfo(1, "srv", "standalone", False, 0, enabled)
 
 
-def b(sh, eh, shared=False, user="Ann"):
+def b(sh, eh, shared=False, user="Ann", shareable=False):
     return BookingView(
-        1, 1, user, 1, L(f"2026-11-10T{sh:02d}:00"), L(f"2026-11-10T{eh:02d}:00"), "all", shared
+        1, 1, user, 1, L(f"2026-11-10T{sh:02d}:00"), L(f"2026-11-10T{eh:02d}:00"), "all", shared,
+        shareable=shareable,
     )
 
 
-def st(bookings=(), shareable_now=False, enabled=True, now=NOW):
-    return compute_status(server(enabled), list(bookings), shareable_now, now, RULES)
+def st(bookings=(), enabled=True, now=NOW):
+    return compute_status(server(enabled), list(bookings), now, RULES)
 
 
 def test_disabled_is_unavailable():
@@ -88,14 +89,26 @@ def L_b(sh, eh):
     return b(sh, eh)
 
 
-def test_shareable_wins_over_booked():
-    s = st([b(10, 20)], shareable_now=True)
-    assert s.code == StatusCode.SHAREABLE and s.label == "In use — shareable"
+def test_one_shareable_booking_is_shareable():
+    s = st([b(10, 20, shareable=True)])
+    assert s.code == StatusCode.SHAREABLE and s.label == "In use — can share"
 
 
-def test_two_current_bookings_not_shareable():
-    s = st([b(10, 20), b(11, 20, shared=True, user="Bob")], shareable_now=True)
+def test_shareable_wins_over_free_soon():
+    assert st([b(10, 13, shareable=True)]).code == StatusCode.SHAREABLE
+
+
+def test_one_non_shareable_booking_is_booked():
+    assert st([b(10, 20)]).code == StatusCode.BOOKED
+
+
+def test_two_people_is_booked():
+    s = st([b(10, 20, shareable=True), b(11, 20, shared=True, user="Bob")])
     assert s.code == StatusCode.BOOKED and s.holders == ("Ann", "Bob")
+
+
+def test_future_shareable_booking_is_booked_soon():
+    assert st([b(13, 20, shareable=True)]).code == StatusCode.BOOKED_SOON
 
 
 def test_booking_ending_exactly_now_is_not_current():
@@ -110,3 +123,10 @@ def test_booking_starting_exactly_now_is_current():
 def test_legend_and_maps():
     assert set(STATUS_EMOJI) == set(StatusCode) == set(STATUS_LABEL)
     assert LEGEND_TEXT == "🟢 available · 🟠 booked soon · 🔴 booked · 🔴➜🟢 free soon · 🟣 shareable · ⚪ unavailable"
+
+
+def test_hm_or_day():
+    from app.domain.status import format_hm_or_day
+
+    assert format_hm_or_day(L("2026-11-10T18:00"), TZ, NOW) == "18:00"
+    assert format_hm_or_day(L("2026-11-11T09:00"), TZ, NOW) == "Wed 11 09:00"

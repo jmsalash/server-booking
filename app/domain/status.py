@@ -40,10 +40,17 @@ def format_day_hm(dt: datetime, tz: str | ZoneInfo) -> str:
     return f"{_DAYS[local.weekday()]} {local.day:02d} {local:%H:%M}"
 
 
+def format_hm_or_day(dt: datetime, tz: str | ZoneInfo, now: datetime) -> str:
+    """`HH:MM` when `dt` falls on the same local day as `now`, else `ddd DD HH:MM`."""
+    zone = ZoneInfo(tz) if isinstance(tz, str) else tz
+    if dt.astimezone(zone).date() == now.astimezone(zone).date():
+        return _hm(dt, zone)
+    return format_day_hm(dt, zone)
+
+
 def compute_status(
     server: ServerInfo,
     bookings: Sequence[BookingView],
-    shareable_now: bool,
     now: datetime,
     rules: Rules,
 ) -> ServerStatus:
@@ -67,8 +74,9 @@ def compute_status(
                     busy_until = x.end
                     extended = True
         next_busy = next((x.start for x in ordered if x.start > busy_until), None)
-        if shareable_now and len(current) < 2:
-            code, label = StatusCode.SHAREABLE, "In use — shareable"
+        # One person in, and they let one more join.
+        if len(current) == 1 and current[0].shareable:
+            code, label = StatusCode.SHAREABLE, "In use — can share"
         elif busy_until - now <= soon:
             code, label = StatusCode.FREE_SOON, f"Free soon (at {_hm(busy_until, tz)})"
         else:

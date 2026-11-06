@@ -14,10 +14,8 @@ class Rules:
     idle_cpu_pct: float = 10.0
     idle_ram_delta_pp: float = 2.0
     max_idle_warnings: int = 3
-    share_threshold_pct: float = 50.0
-    gpu_idle_util_pct: float = 5.0
-    gpu_idle_mem_pct: float = 10.0
-    share_avg_min: int = 60
+    # Two people on one machine: DM both when usage averages at or above this.
+    spike_threshold_pct: float = 50.0
     spike_avg_min: int = 15
     stale_after_min: int = 15
     snapshot_retention_h: int = 48
@@ -25,6 +23,10 @@ class Rules:
     @classmethod
     def from_dict(cls, d: dict) -> "Rules":
         names = {f.name for f in fields(cls)}
+        # Unknown keys (e.g. the old usage-based sharing settings) are ignored; the old
+        # share threshold also drove the high-usage alert, so it carries over to that.
+        if "spike_threshold_pct" not in d and "share_threshold_pct" in d:
+            d = {**d, "spike_threshold_pct": d["share_threshold_pct"]}
         kw = {k: v for k, v in d.items() if k in names}
         if "work_days" in kw:
             kw["work_days"] = tuple(kw["work_days"])

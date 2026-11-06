@@ -19,9 +19,14 @@
       <h3>{{ names.get(b.server_id, "?") }}</h3>
       {% if b.start <= now %}<span class="badge badge--ok">In progress</span>{% else %}<span class="badge badge--accent">Upcoming</span>{% endif %}
       <span class="badge">{{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}</span>
-      {% if b.is_shared %}<span class="badge badge--shared">shared</span>{% endif %}
+      {% if b.shareable %}<span class="badge badge--shareable">Shareable</span>{% endif %}
+      {% set with = partners.get(b.id, []) %}
+      {% if with %}<span class="badge badge--shared">shared</span>{% endif %}
     </div>
     <p class="booking__when">{{ b.start|day_hm(tz) }} – {{ b.end|day_hm(tz) }}</p>
+    {% for x in with %}
+    <p class="booking__with">Shared with <strong>{{ x.user_name }}</strong> <span class="muted">{{ ([x.start, b.start]|max)|day_hm(tz) }} – {{ ([x.end, b.end]|min)|day_hm(tz) }}</span> <span class="badge">{{ "CPU + GPU" if x.resource == "cpu_gpu" else "CPU" }}</span></p>
+    {% endfor %}
     {% if idle %}
     <div class="alert alert--warning idle">
       <span><strong>Idle warnings: {{ b.idle_warnings }}/{{ max_idle }}</strong> — the server looks unused; it will be reclaimed if this reaches {{ max_idle }}.</span>
@@ -37,6 +42,12 @@
         <button type="submit" class="btn">Extend</button>
       </form>
       <div class="actions">
+        {% if not b.is_shared and not with %}
+        <form method="post" action="/bookings/{{ b.id }}/shareable" class="inline">
+          <input type="hidden" name="shareable" value="{{ '0' if b.shareable else '1' }}">
+          <button type="submit" class="btn" title="{{ 'Stop letting another person book the same time' if b.shareable else 'Let one other person book the same time' }}">{{ "Stop sharing" if b.shareable else "Let others share" }}</button>
+        </form>
+        {% endif %}
         {% if b.start > now %}
         <form method="post" action="/bookings/{{ b.id }}/cancel" class="inline"><button type="submit" class="btn btn--danger">Cancel</button></form>
         {% else %}

@@ -29,13 +29,17 @@ class ServerCard:
     # Monitored but no reading saved yet and not failing either: a newly added
     # server waiting for the worker's first poll. Not counted as monitoring down.
     pending: bool = False
+    # Bookings running now, the primary first and the partner (if shared) second.
+    current: tuple[BookingView, ...] = ()
+    # Start of the first booking that starts after now.
+    next_start: datetime | None = None
 
 
 def to_view(b: Booking, user_name: str) -> BookingView:
     return BookingView(
         id=b.id, user_id=b.user_id, user_name=user_name, server_id=b.server_id,
         start=b.start_at, end=b.end_at, resource=b.resource, is_shared=b.is_shared,
-        idle_warnings=b.idle_warnings or 0,
+        idle_warnings=b.idle_warnings or 0, shareable=b.shareable,
     )
 
 
@@ -50,20 +54,9 @@ async def active_bookings(db: AsyncSession, server_id: int, now: datetime) -> li
     return [to_view(b, name) for b, name in rows.all()]
 
 
-def _active_now(bookings: Sequence[BookingView], now: datetime) -> int:
-    return sum(1 for b in bookings if b.start <= now < b.end)
-
-
-async def _shareable(
-    db: AsyncSession, server: Server, bookings: Sequence[BookingView], now: datetime, rules: Rules
-) -> bool:
-    snaps = await usage.recent(db, server.id, now - timedelta(minutes=rules.share_avg_min))
-    return share.is_shareable_now(to_info(server), _active_now(bookings, now), snaps, now, rules)
-
-
-async def shareable_now(db: AsyncSession, server: Server, now: datetime, rules: Rules) -> bool:
-    bookings = await active_bookings(db, server.id, now)
-    return await _shareable(db, server, bookings, now, rules)
+def overlapping(b: BookingView, others: Sequence[BookingView]) -> list[BookingView]:
+    """The other bookings that share time with `b` (its partners, when shared)."""
+    return [x for x in others if x.id != b.id and x.start < b.end and b.start < x.end]
 
 
 async def _failed_last_poll(store: SettingsStore) -> set[str]:
@@ -77,8 +70,7 @@ async def _card(
 ) -> ServerCard:
     info = to_info(server)
     bookings = await active_bookings(db, server.id, now)
-    shareable = server.enabled and await _shareable(db, server, bookings, now, rules)
-    status = compute_status(info, bookings, shareable, now, rules)
+    status = compute_status(info, bookings, now, rules)
     if server.kind == "grafana":
         latest = await usage.latest(db, server.id)
         stale = share.is_stale(latest.ts if latest else None, now, rules)
@@ -87,7 +79,10 @@ async def _card(
         latest, stale, pending = None, False, False
     horizon = now + UPCOMING_WINDOW
     upcoming = [b for b in bookings if b.start < horizon]
-    return ServerCard(info, status, latest, stale, upcoming, pending)
+    current = tuple(sorted((b for b in bookings if b.start <= now < b.end),
+                           key=lambda b: (b.is_shared, b.start, b.id)))
+    next_start = next((b.start for b in bookings if b.start > now), None)
+    return ServerCard(info, status, latest, stale, upcoming, pending, current, next_start)
 
 
 async def build_card(

@@ -13,11 +13,6 @@ def _check_fields(fields: dict) -> None:
         raise TypeError(f"unknown server fields: {sorted(unknown)}")
 
 
-def _normalise(server: Server) -> None:
-    if server.kind == "standalone":
-        server.shareable = False
-
-
 async def list_servers(db: AsyncSession, include_disabled: bool = True) -> list[Server]:
     """Live servers (deleted/archived ones are never listed here)."""
     q = select(Server).where(Server.archived_at.is_(None)).order_by(Server.name)
@@ -43,7 +38,6 @@ async def get_live(db: AsyncSession, server_id: int) -> Server:
 async def create_server(db: AsyncSession, **fields) -> Server:
     _check_fields(fields)
     server = Server(**fields)
-    _normalise(server)
     db.add(server)
     await db.flush()
     return server
@@ -56,7 +50,6 @@ async def update_server(db: AsyncSession, server_id: int, **fields) -> Server:
         raise LookupError(f"server {server_id} not found")
     for key, value in fields.items():
         setattr(server, key, value)
-    _normalise(server)
     await db.flush()
     return server
 
@@ -68,6 +61,5 @@ def to_info(server: Server) -> ServerInfo:
         kind=server.kind,
         has_gpu=bool(server.has_gpu),
         gpu_count=server.gpu_count or 0,
-        shareable=bool(server.shareable),
         enabled=bool(server.enabled),
     )

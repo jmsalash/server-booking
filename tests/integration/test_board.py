@@ -52,21 +52,30 @@ async def test_board_fresh_usage(db, store, make_server):
 
 async def test_board_shareable_card(db, store, make_server, make_user):
     user = await make_user(display_name="ana")
-    server = await make_server(kind="grafana", shareable=True)
-    await _add(db, user, server, at(11), at(18))
-    await _snapshots(db, server, NOW)
-    assert await board.shareable_now(db, server, NOW, await store.get_rules()) is True
+    server = await make_server(kind="grafana")
+    a = await _add(db, user, server, at(11), at(18), shareable=True)
     card = await board.build_card(db, store, server.id, NOW)
     assert card.status.code == StatusCode.SHAREABLE
     assert card.status.holders == ("ana",)
+    assert [b.id for b in card.current] == [a.id] and card.current[0].shareable
 
 
-async def test_board_not_shareable_when_busy(db, store, make_server, make_user):
+async def test_board_shared_pair_is_booked_primary_first(db, store, make_server, make_user):
+    ana, bob = await make_user(display_name="ana"), await make_user(display_name="bob")
+    server = await make_server(kind="grafana")
+    b = await _add(db, bob, server, at(11), at(14), is_shared=True)
+    a = await _add(db, ana, server, at(12), at(18), shareable=True)
+    nxt = await _add(db, bob, server, at(19), at(20))
+    card = await board.build_card(db, store, server.id, NOW)
+    assert card.status.code == StatusCode.BOOKED
+    assert [x.id for x in card.current] == [a.id, b.id]
+    assert card.next_start == nxt.start_at
+
+
+async def test_board_non_shareable_booking_is_booked(db, store, make_server, make_user):
     user = await make_user()
-    server = await make_server(kind="grafana", shareable=True)
+    server = await make_server(kind="grafana")
     await _add(db, user, server, at(11), at(18))
-    await _snapshots(db, server, NOW, pct=80.0)
-    assert await board.shareable_now(db, server, NOW, await store.get_rules()) is False
     card = await board.build_card(db, store, server.id, NOW)
     assert card.status.code == StatusCode.BOOKED
 
@@ -128,18 +137,16 @@ async def test_monitoring_down_ignores_disabled(db, store, make_server):
 
 
 async def test_inventory_crud(db):
-    s = await inventory.create_server(db, name="x", hostname="x.lab", kind="standalone",
-                                      shareable=True)
-    assert s.shareable is False
+    s = await inventory.create_server(db, name="x", hostname="x.lab", kind="standalone")
     g = await inventory.create_server(db, name="g", hostname="g.lab", kind="grafana",
-                                      grafana_instance="g:9100", shareable=True, enabled=False)
-    assert g.shareable is True
+                                      grafana_instance="g:9100", enabled=False)
+    with pytest.raises(TypeError):  # the server-level sharing flag is gone
+        await inventory.create_server(db, name="y", hostname="y.lab", kind="grafana",
+                                      shareable=True)
     assert [x.name for x in await inventory.list_servers(db)] == ["g", "x"]
     assert [x.name for x in await inventory.list_servers(db, include_disabled=False)] == ["x"]
     g2 = await inventory.update_server(db, g.id, kind="standalone", enabled=True)
-    assert g2.kind == "standalone" and g2.shareable is False and g2.enabled is True
-    s2 = await inventory.update_server(db, s.id, shareable=True)
-    assert s2.shareable is False
+    assert g2.kind == "standalone" and g2.enabled is True
 
 
 async def test_archived_servers_hidden_from_board(db, store, make_server):

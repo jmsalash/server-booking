@@ -13,6 +13,7 @@ class BookingRequest:
     start: datetime
     end: datetime
     resource: str
+    user_id: int | None = None  # the booker; overlapping your own booking is a CONFLICT
 
 
 class BookingError(StrEnum):
@@ -23,8 +24,8 @@ class BookingError(StrEnum):
     NO_GPU = "NO_GPU"
     SERVER_DISABLED = "SERVER_DISABLED"
     CONFLICT = "CONFLICT"
-    SHARE_MUST_START_NOW = "SHARE_MUST_START_NOW"
     TOO_MANY_OVERLAPS = "TOO_MANY_OVERLAPS"
+    SHARE_LOCKED = "SHARE_LOCKED"
 
 
 @dataclass(frozen=True)
@@ -32,21 +33,33 @@ class Validation:
     ok: bool
     error: BookingError | None = None
     is_shared: bool = False
-    share_with: str | None = None
+    # The shareable bookings the request would join (empty unless is_shared).
+    share_with: tuple[BookingView, ...] = ()
 
 
 def _fail(error: BookingError) -> Validation:
-    return Validation(False, error, False, None)
+    return Validation(False, error)
+
+
+def _overlap(a_start: datetime, a_end: datetime, b: BookingView) -> bool:
+    return b.start < a_end and a_start < b.end
 
 
 def validate_booking(
     req: BookingRequest,
     existing: Sequence[BookingView],
     server: ServerInfo,
-    shareable_now: bool,
     now: datetime,
     rules: Rules,
+    paired: frozenset[int] = frozenset(),
 ) -> Validation:
+    """Check a new booking (or the new span of an extension) against the server's bookings.
+
+    It may overlap other active bookings only if each one it overlaps is shareable and at no
+    instant would more than two bookings be active. `paired` are bookings the request already
+    shares with (an extension's existing partner): they count towards the two but need not be
+    shareable, and are not reported as newly joined.
+    """
     tz = rules.timezone
     hour = floor_hour(now, tz)
     if not server.enabled:
@@ -62,14 +75,17 @@ def validate_booking(
     if req.resource == "cpu_gpu" and not server.has_gpu:
         return _fail(BookingError.NO_GPU)
 
-    overlaps = [b for b in existing if b.start < req.end and req.start < b.end]
+    overlaps = [b for b in existing if _overlap(req.start, req.end, b)]
     if not overlaps:
         return Validation(True)
-    if not server.shareable or not shareable_now:
+    # Two existing bookings active at the same instant inside the request: a third person.
+    for i, x in enumerate(overlaps):
+        for y in overlaps[i + 1:]:
+            if _overlap(max(req.start, x.start), min(req.end, x.end), y):
+                return _fail(BookingError.TOO_MANY_OVERLAPS)
+    joined = tuple(b for b in overlaps if b.id not in paired)
+    if any(not b.shareable for b in joined):
         return _fail(BookingError.CONFLICT)
-    if len(overlaps) > 1:
-        return _fail(BookingError.TOO_MANY_OVERLAPS)
-    other = overlaps[0]
-    if not (other.start <= now < other.end) or req.start != hour:
-        return _fail(BookingError.SHARE_MUST_START_NOW)
-    return Validation(True, None, True, other.user_name)
+    if req.user_id is not None and any(b.user_id == req.user_id for b in joined):
+        return _fail(BookingError.CONFLICT)
+    return Validation(True, None, True, joined)

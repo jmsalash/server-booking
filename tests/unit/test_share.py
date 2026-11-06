@@ -1,21 +1,12 @@
 from datetime import timedelta
 
 from app.domain.rules import Rules
-from app.domain.share import is_over_threshold, is_shareable_now, is_stale, spike_decision
+from app.domain.share import is_over_threshold, is_stale, spike_decision
 from app.domain.timeutil import parse_local
-from app.domain.types import GpuUsage, ServerInfo, ServerUsage
+from app.domain.types import GpuUsage, ServerUsage
 
 R = Rules()
 now = parse_local("2026-11-10T12:20", R.timezone)
-
-
-def server(kind="grafana", gpus=0, shareable=True):
-    return ServerInfo(1, "s", kind, gpus > 0, gpus, shareable, True)
-
-
-cpu_server = server()
-gpu1 = server(gpus=1)
-gpu4 = server(gpus=4)
 
 
 def snaps(cpu, ram, gpus=(), minutes=60, end=None):
@@ -31,69 +22,6 @@ def snaps(cpu, ram, gpus=(), minutes=60, end=None):
     ]
 
 
-def test_cpu_server_under_50_shareable():
-    assert is_shareable_now(cpu_server, 1, snaps(30, 40), now, R)
-
-
-def test_ram_over_50_not_shareable():
-    assert not is_shareable_now(cpu_server, 1, snaps(30, 60), now, R)
-
-
-def test_cpu_over_50_not_shareable():
-    assert not is_shareable_now(cpu_server, 1, snaps(60, 10), now, R)
-
-
-def test_threshold_is_strict():
-    assert not is_shareable_now(cpu_server, 1, snaps(50, 10), now, R)
-
-
-def test_multi_gpu_half_idle_shareable():
-    g = [(90, 80), (90, 80), (0, 1), (2, 3)]
-    assert is_shareable_now(gpu4, 1, snaps(20, 30, gpus=g), now, R)
-
-
-def test_multi_gpu_three_busy_not_shareable():
-    g = [(90, 80), (90, 80), (50, 60), (2, 3)]
-    assert not is_shareable_now(gpu4, 1, snaps(20, 30, gpus=g), now, R)
-
-
-def test_single_gpu_low_memory_shareable_even_if_util_high():
-    assert is_shareable_now(gpu1, 1, snaps(20, 30, gpus=[(95, 30)]), now, R)
-
-
-def test_single_gpu_memory_over_half_not_shareable():
-    assert not is_shareable_now(gpu1, 1, snaps(20, 30, gpus=[(5, 70)]), now, R)
-
-
-def test_stale_not_shareable():
-    s = snaps(10, 10, end=now - timedelta(minutes=20))
-    assert not is_shareable_now(cpu_server, 1, s, now, R)
-
-
-def test_empty_not_shareable():
-    assert not is_shareable_now(cpu_server, 1, [], now, R)
-
-
-def test_standalone_never_shareable():
-    assert not is_shareable_now(server(kind="standalone"), 1, snaps(10, 10), now, R)
-    assert not is_shareable_now(server(shareable=False), 1, snaps(10, 10), now, R)
-
-
-def test_gpu_count_mismatch_is_missing_data():
-    assert not is_shareable_now(gpu4, 1, snaps(20, 30, gpus=[(0, 0)] * 3), now, R)
-    assert not is_shareable_now(gpu1, 1, snaps(20, 30), now, R)
-
-
-def test_zero_or_two_active_bookings_not_shareable():
-    assert not is_shareable_now(cpu_server, 0, snaps(10, 10), now, R)
-    assert not is_shareable_now(cpu_server, 2, snaps(10, 10), now, R)
-
-
-def test_old_snapshots_outside_window_ignored():
-    old = snaps(90, 90, minutes=120, end=now - timedelta(minutes=61))
-    assert is_shareable_now(cpu_server, 1, old + snaps(10, 10, minutes=55), now, R)
-
-
 def test_is_stale():
     assert is_stale(None, now, R)
     assert not is_stale(now - timedelta(minutes=15), now, R)
@@ -106,6 +34,22 @@ def test_is_over_threshold():
     assert not is_over_threshold([], now, R, 15, 0)
     assert is_over_threshold(snaps(10, 10, gpus=[(0, 80)], minutes=15), now, R, 15, 1)
     assert not is_over_threshold(snaps(10, 10, gpus=[(0, 20)], minutes=15), now, R, 15, 1)
+
+
+def test_over_threshold_any_gpu_memory():
+    assert is_over_threshold(snaps(10, 10, gpus=[(0, 5), (0, 60)], minutes=15), now, R, 15, 2)
+    assert not is_over_threshold(snaps(10, 10, gpus=[(99, 5)] * 2, minutes=15), now, R, 15, 2)
+
+
+def test_rules_load_old_stored_share_keys():
+    old = {**Rules().to_dict(), "share_threshold_pct": 40.0, "share_avg_min": 60,
+           "gpu_idle_util_pct": 5.0, "gpu_idle_mem_pct": 10.0}
+    old.pop("spike_threshold_pct")
+    r = Rules.from_dict(old)
+    assert r.spike_threshold_pct == 40.0
+    assert not hasattr(r, "share_avg_min")
+    assert Rules.from_dict({"share_threshold_pct": 40.0, "spike_threshold_pct": 70.0}
+                           ).spike_threshold_pct == 70.0
 
 
 def test_over_threshold_excludes_mismatched_gpu_snapshots():
