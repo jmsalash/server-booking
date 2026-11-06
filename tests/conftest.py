@@ -21,7 +21,12 @@ from app.web.main import create_app
 
 @pytest.fixture(scope="session")
 def pg_url():
-    with PostgresContainer("postgres:16") as pg:
+    # Throwaway test DB: keep data in RAM and skip fsync. On a spinning disk the
+    # default durable settings made every per-test cleanup cost ~2.5 s.
+    pg = PostgresContainer("postgres:16").with_command(
+        "postgres -c fsync=off -c synchronous_commit=off -c full_page_writes=off"
+    ).with_tmpfs_mount("/var/lib/postgresql/data")
+    with pg:
         url = pg.get_connection_url()  # postgresql+psycopg2://...
         yield "postgresql+asyncpg://" + url.split("://", 1)[1]
 
