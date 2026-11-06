@@ -46,8 +46,8 @@ def b(s, e, user="bob", shared=False, shareable=False, user_id=1):
                        shareable=shareable)
 
 
-def v(r, existing=(), server=None, paired=frozenset()):
-    return validate_booking(r, list(existing), server or srv(), NOW, R, paired)
+def v(r, existing=(), server=None, paired=frozenset(), may_join=True):
+    return validate_booking(r, list(existing), server or srv(), NOW, R, paired, may_join)
 
 
 def test_ok_free_slot():
@@ -96,8 +96,20 @@ def test_adjacent_is_not_overlap():
 
 def test_join_shareable_booking():
     ana = b(10, 14, user="ana", shareable=True)
-    r = v(req(12, 16), existing=[ana])
+    r = v(req(12, 14), existing=[ana])
     assert r.ok and r.is_shared and r.share_with == (ana,)
+
+
+def test_join_must_end_by_the_main_booking_end():
+    ana = b(10, 14, user="ana", shareable=True)
+    r = v(req(12, 16), existing=[ana])
+    assert r.error == E.OUTSIDE_HOST and r.host == ana and not r.is_shared
+
+
+def test_join_must_not_start_before_the_main_booking():
+    ana = b(14, 20, user="ana", shareable=True)
+    r = v(req(13, 16), existing=[ana])
+    assert r.error == E.OUTSIDE_HOST and r.host == ana
 
 
 def test_join_future_shareable_booking():
@@ -105,10 +117,16 @@ def test_join_future_shareable_booking():
     assert r.ok and r.is_shared
 
 
-def test_join_two_consecutive_shareable_bookings():
+def test_cannot_join_two_consecutive_shareable_bookings():
+    # Borrowed time lies inside one main booking, so it can't span two.
     x, y = b(10, 14, shareable=True), b(14, 18, shareable=True)
     r = v(req(13, 15), existing=[x, y])
-    assert r.ok and r.share_with == (x, y)
+    assert r.error == E.OUTSIDE_HOST and r.host == x
+
+
+def test_extension_never_joins():
+    r = v(req(13, 15), existing=[b(14, 18, shareable=True)], may_join=False)
+    assert r.error == E.CONFLICT
 
 
 def test_overlap_shareable_and_non_shareable_is_conflict():

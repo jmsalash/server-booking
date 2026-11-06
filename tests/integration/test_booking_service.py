@@ -105,16 +105,16 @@ async def test_share_needs_confirmation_then_succeeds(db, store, make_user, make
     server = await make_server(name="srv", kind="grafana")
     a = await _add(db, ana, server, at(11), at(16), shareable=True)
     with pytest.raises(ShareConfirmationRequired) as e:
-        await create_booking(db, store, bob, server.id, at(12), at(18), "cpu", NOW,
+        await create_booking(db, store, bob, server.id, at(12), at(16), "cpu", NOW,
                              confirm_shared=False)
     assert [x.id for x in e.value.share_with] == [a.id]
     assert await _items(db) == []
-    b = await create_booking(db, store, bob, server.id, at(12), at(18), "cpu", NOW,
+    b = await create_booking(db, store, bob, server.id, at(12), at(16), "cpu", NOW,
                              confirm_shared=True, shareable=True)
     assert b.is_shared and not b.shareable  # a partner never opens it to a third person
     assert await _texts(db) == [
         (ana.telegram_id, "🤝 bob will share srv with you Thu 05 13:00–Thu 05 17:00."),
-        (GROUP, "🔴 srv booked by bob, Thu 05 13:00–Thu 05 19:00 (shared)"),
+        (GROUP, "🔴 srv booked by bob, Thu 05 13:00–Thu 05 17:00 (shared)"),
     ]
     assert len(await _items(db, "calendar_create")) == 1  # the joiner's own event
     [entry] = [x for x in await _audit(db) if x.action == "booking.create"]
@@ -336,21 +336,61 @@ async def test_extend_keeps_existing_share_pair(db, store, make_user, make_serve
     await extend(db, store, a.id, ana, at(19), NOW)
     await extend(db, store, b.id, bob, at(16), NOW)
     assert (a.end_at, b.end_at) == (at(19), at(16))
-    with pytest.raises(BookingRejected) as e:  # new overlap with a third booking
-        await extend(db, store, b.id, bob, at(21), NOW)
-    assert e.value.error == BookingError.CONFLICT
 
 
-async def test_extend_into_shareable_booking_joins_it(db, store, make_user, make_server):
+async def test_join_past_main_booking_end_refused(db, store, make_user, make_server):
+    ana, bob = await make_user(display_name="Ana"), await make_user()
+    server = await make_server()
+    a = await _add(db, ana, server, at(11), at(16), shareable=True)
+    for start, end in ((at(12), at(17)), (at(15), at(18))):
+        with pytest.raises(BookingRejected) as e:
+            await create_booking(db, store, bob, server.id, start, end, "cpu", NOW,
+                                 confirm_shared=True)
+        assert e.value.error == BookingError.OUTSIDE_HOST and e.value.host.id == a.id
+    b = await create_booking(db, store, bob, server.id, at(15), at(16), "cpu", NOW,
+                             confirm_shared=True)  # up to the main booking's end is fine
+    assert b.is_shared
+
+
+async def test_partner_extension_capped_at_main_booking_end(db, store, make_user, make_server):
+    ana, bob = await make_user(display_name="Ana"), await make_user()
+    server = await make_server()
+    a = await _add(db, ana, server, at(11), at(18), shareable=True)
+    b = await _add(db, bob, server, at(12), at(14), is_shared=True)
+    with pytest.raises(BookingRejected) as e:
+        await extend(db, store, b.id, bob, at(19), NOW)
+    assert e.value.error == BookingError.OUTSIDE_HOST and e.value.host.id == a.id
+    assert b.end_at == at(14)
+    await extend(db, store, b.id, bob, at(18), NOW)
+    assert b.end_at == at(18)
+    # The main booking can still be extended; the partner then may follow it.
+    await extend(db, store, a.id, ana, at(20), NOW)
+    await extend(db, store, b.id, bob, at(20), NOW)
+    assert (a.end_at, b.end_at) == (at(20), at(20))
+
+
+async def test_partner_keeps_time_when_main_booking_ends(db, store, make_user, make_server):
+    ana, bob = await make_user(), await make_user()
+    server = await make_server()
+    a = await _add(db, ana, server, at(11), at(18), shareable=True)
+    b = await _add(db, bob, server, at(12), at(17), is_shared=True)
+    await cancel_booking(db, store, a.id, ana, NOW)  # ongoing: ends at the next hour
+    assert a.end_at == at(13) and b.end_at == at(17) and b.status == "active"
+    with pytest.raises(BookingRejected) as e:  # can't stretch borrowed time further
+        await extend(db, store, b.id, bob, at(18), NOW)
+    assert e.value.error == BookingError.OUTSIDE_HOST
+
+
+async def test_extend_into_shareable_booking_is_a_conflict(db, store, make_user, make_server):
     ana, bob = await make_user(display_name="ana"), await make_user(display_name="bob")
     server = await make_server(name="srv")
     b = await _add(db, bob, server, at(14), at(16), shareable=True)
     a = await _add(db, ana, server, at(16), at(20), shareable=True)
-    await extend(db, store, b.id, bob, at(18), NOW)
-    assert (b.end_at, b.is_shared, b.shareable) == (at(18), True, False)
-    assert (ana.telegram_id, "🤝 bob will share srv with you Thu 05 17:00–Thu 05 19:00.") in (
-        await _texts(db))
-    assert a.shareable
+    with pytest.raises(BookingRejected) as e:
+        await extend(db, store, b.id, bob, at(18), NOW)
+    assert e.value.error == BookingError.CONFLICT
+    assert (b.end_at, b.is_shared, b.shareable) == (at(16), False, True)
+    assert await _texts(db) == [] and a.shareable
 
 
 async def test_extend_cannot_make_three_people(db, store, make_user, make_server):

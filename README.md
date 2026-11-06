@@ -107,12 +107,17 @@ bookable (and can be shared) but are never reclaimed.
 **Sharing.** Sharing is chosen per booking by the person booking: tick
 "Allow sharing" on the booking form (or use "Let others share" under My
 bookings, as long as nobody has joined yet). Someone else may
-then book an overlapping time — the board shows the machine purple ("In use —
-can share") with a **Join** button, and the booking form asks them to confirm
-("You'll be sharing gpu-01 with Ana from … to …"). The owner gets a Telegram
-message when someone joins. At most two people are on a machine at any instant,
-and the one who joins can't open it to a third. Overlapping a booking that is
-not shareable is refused, for new bookings and extensions alike. The CPU only /
+then join it — the board shows the machine purple ("In use — can share") with a
+**Join** button, and the booking form asks them to confirm ("You'll be sharing
+gpu-01 with Ana from … to …"). The owner gets a Telegram message when someone
+joins. The booker holds the main booking; the one who joins only borrows time
+inside it: their booking must start and end within the main booking ("You can
+only join until Ana's booking ends at 18:00."), and extending it is capped at
+the main booking's end. If the main booking ends early, the partner keeps the
+time they already have. At most two people are on a machine at any instant, and
+the one who joins can't open it to a third. Overlapping a booking that is not
+shareable is refused, and an extension never joins anyone: running into another
+booking, shareable or not, is refused. The CPU only /
 CPU + GPU choice is shown on the board and in the bot so you can see what the
 other person uses; it is not enforced.
 

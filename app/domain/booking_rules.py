@@ -26,6 +26,8 @@ class BookingError(StrEnum):
     CONFLICT = "CONFLICT"
     TOO_MANY_OVERLAPS = "TOO_MANY_OVERLAPS"
     SHARE_LOCKED = "SHARE_LOCKED"
+    # Joining borrows time inside the shareable booking: it can't start before or end after it.
+    OUTSIDE_HOST = "OUTSIDE_HOST"
 
 
 @dataclass(frozen=True)
@@ -33,8 +35,10 @@ class Validation:
     ok: bool
     error: BookingError | None = None
     is_shared: bool = False
-    # The shareable bookings the request would join (empty unless is_shared).
+    # The shareable booking the request would join (empty unless is_shared).
     share_with: tuple[BookingView, ...] = ()
+    # OUTSIDE_HOST: the booking whose window the request must stay inside.
+    host: BookingView | None = None
 
 
 def _fail(error: BookingError) -> Validation:
@@ -52,13 +56,16 @@ def validate_booking(
     now: datetime,
     rules: Rules,
     paired: frozenset[int] = frozenset(),
+    may_join: bool = True,
 ) -> Validation:
     """Check a new booking (or the new span of an extension) against the server's bookings.
 
-    It may overlap other active bookings only if each one it overlaps is shareable and at no
-    instant would more than two bookings be active. `paired` are bookings the request already
-    shares with (an extension's existing partner): they count towards the two but need not be
-    shareable, and are not reported as newly joined.
+    It may overlap another active booking only by joining it: that booking must be shareable,
+    the request must lie entirely inside it (the joiner borrows time; it is not an official
+    booking of its own), and at no instant may more than two bookings be active. `paired` are
+    bookings the request already shares with (an extension's main booking or partner): they
+    count towards the two but are not joined again. With `may_join` False (extensions) any
+    other overlap is a CONFLICT.
     """
     tz = rules.timezone
     hour = floor_hour(now, tz)
@@ -84,8 +91,13 @@ def validate_booking(
             if _overlap(max(req.start, x.start), min(req.end, x.end), y):
                 return _fail(BookingError.TOO_MANY_OVERLAPS)
     joined = tuple(b for b in overlaps if b.id not in paired)
-    if any(not b.shareable for b in joined):
+    if not joined:  # only the bookings it already shares with
+        return Validation(True, None, True)
+    if not may_join or any(not b.shareable for b in joined):
         return _fail(BookingError.CONFLICT)
     if req.user_id is not None and any(b.user_id == req.user_id for b in joined):
         return _fail(BookingError.CONFLICT)
+    for host in joined:
+        if req.start < host.start or req.end > host.end:
+            return Validation(False, BookingError.OUTSIDE_HOST, host=host)
     return Validation(True, None, True, joined)

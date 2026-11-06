@@ -18,9 +18,10 @@ OVERLAP_CONSTRAINT = "bookings_no_overlap"
 
 
 class BookingRejected(Exception):
-    def __init__(self, error: BookingError):
+    def __init__(self, error: BookingError, host: BookingView | None = None):
         super().__init__(str(error))
         self.error = error
+        self.host = host  # OUTSIDE_HOST: the main booking the time is borrowed from
 
 
 class ShareConfirmationRequired(Exception):
@@ -115,8 +116,9 @@ async def create_booking(
     confirm_shared: bool = False,
     shareable: bool = False,
 ) -> Booking:
-    """Book a server. Overlapping shareable bookings is allowed (the new one is the partner,
-    never itself shareable) once the booker confirms; any other overlap is rejected."""
+    """Book a server. Joining a shareable booking is allowed once the booker confirms: the new
+    booking is the partner (never itself shareable) and must lie inside the shareable booking.
+    Any other overlap is rejected."""
     if not user.active:
         raise PermissionError(f"user {user.id} is inactive")
     rules = await store.get_rules()
@@ -128,7 +130,7 @@ async def create_booking(
         BookingRequest(start, end, resource, user.id), existing, to_info(server), now, rules
     )
     if not v.ok:
-        raise BookingRejected(v.error)
+        raise BookingRejected(v.error, v.host)
     if v.is_shared and not confirm_shared:
         raise ShareConfirmationRequired(v.share_with)
 
@@ -269,38 +271,36 @@ async def extend(
     if new_end - b.start_at > timedelta(hours=rules.max_booking_hours):
         raise BookingRejected(BookingError.TOO_LONG)
     req_start = max(b.start_at, floor_hour(now, rules.timezone))
-    # The same rules as a new booking: the extension may run into shareable bookings (this one
-    # then joins them as their partner) but never into a non-shareable one, and never makes
-    # three people. A partner it already shares with stays accepted.
+    # Extending never joins anyone: running into another booking is a conflict. A partner only
+    # borrows time inside the main booking it joined, so it can't extend past that booking.
     existing = [x for x in await board.active_bookings(db, b.server_id, now) if x.id != b.id]
-    paired = frozenset(
-        x.id for x in existing
-        if (x.is_shared or b.is_shared) and x.start < b.end_at and b.start_at < x.end
-    )
+    mine = board.to_view(b, "")
+    overlapping = board.overlapping(mine, existing)
+    if b.is_shared:
+        host = next((x for x in overlapping if not x.is_shared), None)
+        if host is None or new_end > host.end:
+            raise BookingRejected(BookingError.OUTSIDE_HOST, host)
+        paired = frozenset({host.id})
+    else:
+        paired = frozenset(x.id for x in overlapping if x.is_shared)
     v = validate_booking(
         BookingRequest(req_start, new_end, b.resource, b.user_id), existing, to_info(server),
-        now, rules, paired,
+        now, rules, paired, may_join=False,
     )
     if not v.ok:
-        raise BookingRejected(v.error)
-    old = (b.end_at, b.end_reminder_sent, b.is_shared, b.shareable)
+        raise BookingRejected(v.error, v.host)
+    old_end, old_reminder = b.end_at, b.end_reminder_sent
     b.end_at = new_end
     b.end_reminder_sent = False  # re-arm the end reminder for the new end
-    if v.share_with:
-        b.is_shared, b.shareable = True, False
     try:
         await _flush_or_conflict(db)
     except BookingRejected:
-        b.end_at, b.end_reminder_sent, b.is_shared, b.shareable = old
+        b.end_at, b.end_reminder_sent = old_end, old_reminder
         raise
-    if v.share_with:
-        owner = await db.get(User, b.user_id)
-        await _tell_joined(db, owner, server, old[0], new_end, v.share_with, now, rules)
     await calendar_sync.queue_update(db, store, b.id, now)
     await audit.record(
         db, "booking.extend", _target(b), now=now, actor_user_id=actor.id,
-        details={"old_end": old[0].isoformat(), "new_end": new_end.isoformat(),
-                 "shared_with": [x.id for x in v.share_with]},
+        details={"old_end": old_end.isoformat(), "new_end": new_end.isoformat()},
     )
 
 

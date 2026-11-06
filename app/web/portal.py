@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import clock
 from app.domain.booking_rules import BookingError
 from app.domain.rules import Rules
-from app.domain.status import STATUS_LABEL
+from app.domain.status import STATUS_LABEL, format_day_hm, format_hm_or_day
 from app.domain.timeutil import floor_hour, parse_local
-from app.domain.types import StatusCode
+from app.domain.types import BookingView, StatusCode
 from app.models import Booking, LoginToken, Server, Session, User
 from app.services import auth, board, booking, watchlist
 from app.services.inventory import get_live, list_servers
@@ -41,6 +41,8 @@ ERROR_TEXT: dict[BookingError, str] = {
     BookingError.TOO_MANY_OVERLAPS: "Two people already share this server at that time.",
     BookingError.SHARE_LOCKED: "Sharing can't be changed while the booking is shared with "
                                "someone.",
+    # Normally replaced by outside_host_text, which names the booking and its times.
+    BookingError.OUTSIDE_HOST: "You can only join within the other person's booking.",
 }
 
 RESOURCES = ("cpu", "cpu_gpu")
@@ -61,8 +63,22 @@ def max_length_text(hours: int) -> str:
     return f"{hours} hour" if hours == 1 else f"{hours} hours"
 
 
-def error_text(error: BookingError, rules: Rules) -> str:
+def error_text(error: BookingError, rules: Rules, host: BookingView | None = None) -> str:
+    if error == BookingError.OUTSIDE_HOST:
+        return outside_host_text(host, rules, clock.utcnow())
     return ERROR_TEXT[error].format(limit=max_length_text(rules.max_booking_hours))
+
+
+def outside_host_text(host: BookingView | None, rules: Rules, now: datetime) -> str:
+    """Joining borrows time inside someone's booking; say which edge was crossed."""
+    if host is None:
+        return "You joined someone else's booking, which has ended — it can't be extended."
+    tz = rules.timezone
+    if host.start > now:  # not started yet: both edges matter
+        return (f"You can only join within {host.user_name}'s booking, "
+                f"{format_day_hm(host.start, tz)}–{format_hm_or_day(host.end, tz, host.start)}.")
+    return (f"You can only join until {host.user_name}'s booking ends at "
+            f"{format_hm_or_day(host.end, tz, now)}.")
 
 
 def parse_form_dt(value, tz: str) -> datetime | None:
@@ -320,7 +336,7 @@ async def book_submit(
     except booking.BookingRejected as e:
         await _rollback(db, user)
         return await _render_book(request, db, store, user, server_id, values, 400,
-                                  error_text(e.error, rules))
+                                  error_text(e.error, rules, e.host))
     await db.commit()
     return _redirect("/me")
 
@@ -467,7 +483,7 @@ async def set_shareable(
     except booking.BookingRejected as e:
         await _rollback(db, user)
         msg = "That booking has ended." if e.error == BookingError.IN_PAST else error_text(
-            e.error, rules)
+            e.error, rules, e.host)
         return await _render_me(request, db, store, user, 400, msg)
     await db.commit()
     return _redirect("/me")
@@ -491,7 +507,7 @@ async def extend(
         await booking.extend(db, store, check_id(booking_id), user, new_end, clock.utcnow())
     except booking.BookingRejected as e:
         await _rollback(db, user)
-        return await _render_me(request, db, store, user, 400, error_text(e.error, rules))
+        return await _render_me(request, db, store, user, 400, error_text(e.error, rules, e.host))
     await db.commit()
     return _redirect("/me")
 

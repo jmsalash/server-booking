@@ -123,8 +123,9 @@ async def seed(db, store) -> dict:
         # gpu-02: a shared pair (Chiara let others in; Dario joined on CPU only).
         Booking(user_id=u["Chiara Verdi"].id, server_id=s["gpu-02"].id, start_at=hour - 3 * h,
                 end_at=hour + 2 * h, resource="cpu_gpu", shareable=True),
+        # Dario borrows time inside Chiara's booking, so it ends by hers.
         Booking(user_id=u["Dario Neri"].id, server_id=s["gpu-02"].id, start_at=hour - h,
-                end_at=hour + 26 * h, resource="cpu", is_shared=True),
+                end_at=hour + 2 * h, resource="cpu", is_shared=True),
         Booking(user_id=u["Dario Neri"].id, server_id=s["cpu-04"].id, start_at=hour + 2 * h,
                 end_at=hour + 6 * h, resource="cpu"),
         Booking(user_id=u["Ana Rossi"].id, server_id=s["gpu-05"].id, start_at=hour - h,

@@ -227,6 +227,47 @@ async def test_share_warning_then_confirm(client, logged_in, db, make_user, make
     assert len(mine) == 1 and mine[0].is_shared
 
 
+async def test_join_past_main_booking_end_refused_with_message(client, logged_in, db,
+                                                              make_user, make_server):
+    ana = await make_user(display_name="Ana")
+    s = await make_server(name="shr")
+    # Ana 10:00-17:00 UTC = Mon 09 11:00-18:00 Rome, running now.
+    await _add(db, ana, s, datetime(2026, 11, 9, 10, tzinfo=UTC),
+               datetime(2026, 11, 9, 17, tzinfo=UTC), shareable=True)
+    await db.commit()
+    form = {"server_id": s.id, "start": "2026-11-09T12:00", "end": "2026-11-09T20:00",
+            "resource": "cpu", "confirm_shared": "1", "warned_server_id": str(s.id),
+            "warned_start": "2026-11-09T12:00", "warned_end": "2026-11-09T20:00"}
+    r = await client.post("/book", data=form)
+    assert r.status_code == 400
+    assert "You can only join until Ana&#39;s booking ends at 18:00." in r.text
+    assert len(await _bookings(db, s.id)) == 1
+
+
+async def test_partner_extend_past_main_booking_shows_message(client, logged_in, db, make_user,
+                                                             make_server):
+    ana = await make_user(display_name="Ana")
+    s = await make_server(name="shr")
+    await _add(db, ana, s, datetime(2026, 11, 9, 10, tzinfo=UTC),
+               datetime(2026, 11, 9, 17, tzinfo=UTC), shareable=True)
+    b = await _add(db, logged_in, s, datetime(2026, 11, 9, 11, tzinfo=UTC),
+                   datetime(2026, 11, 9, 13, tzinfo=UTC), is_shared=True)
+    await db.commit()
+    r = await client.post(f"/bookings/{b.id}/extend", data={"end": "2026-11-09T19:00"})
+    assert r.status_code == 400
+    assert "You can only join until Ana&#39;s booking ends at 18:00." in r.text
+
+
+def test_outside_host_text_for_a_future_booking():
+    from app.domain.types import BookingView
+    from app.web.portal import outside_host_text
+    host = BookingView(1, 1, "Ana", 1, datetime(2026, 11, 10, 9, tzinfo=UTC),
+                       datetime(2026, 11, 10, 17, tzinfo=UTC), "cpu", False, shareable=True)
+    assert outside_host_text(host, Rules(), NOW) == (
+        "You can only join within Ana's booking, Tue 10 10:00–18:00.")
+    assert "has ended" in outside_host_text(None, Rules(), NOW)
+
+
 async def test_conflict_error_message(client, logged_in, db, make_user, make_server):
     bob = await make_user(display_name="Bob")
     s = await make_server(name="srv")
