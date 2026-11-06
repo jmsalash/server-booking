@@ -1,7 +1,9 @@
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from app.domain.idle import IdleAction, IdleState, evaluate_idle
+from app.domain.idle import (
+    IdleAction, IdleState, evaluate_idle, evaluate_machine_idle, machine_resource,
+)
 from app.domain.rules import Rules
 from app.domain.timeutil import parse_local
 from app.domain.types import GpuUsage, ServerUsage
@@ -139,3 +141,59 @@ def test_cpu_gpu_booking_with_no_gpu_data_is_missing_data():
     res = drive(L("2026-11-10T09:00"), 600, no_gpu, resource="cpu_gpu", state=state)
     assert events(res) == []
     assert all(d.state == IdleState(2, None, None) for n, d in res)
+
+
+def drive_pair(start, minutes, sample, resource="cpu_gpu", ack=None):
+    """Two bookings on one machine; `ack(now)` returns the index whose owner says still using."""
+    states = [IdleState(0, None, None), IdleState(0, None, None)]
+    out = []
+    for i in range(minutes // 5 + 1):
+        now = start + timedelta(minutes=5 * i)
+        if ack and (k := ack(now)) is not None:
+            states[k] = IdleState(0, None, None)
+        decs = evaluate_machine_idle(states, sample(now, i), now, resource, RULES)
+        states = [d.state for d in decs]
+        out.append((now, decs))
+    return out
+
+
+def pair_events(results, k):
+    return [(local(n), ds[k].action) for n, ds in results if ds[k].action != NONE]
+
+
+def test_shared_machine_warns_both():
+    res = drive_pair(L("2026-11-10T09:00"), 125, quiet)
+    assert pair_events(res, 0) == pair_events(res, 1) == [("Tue 2026-11-10T11:00", WARN)]
+
+
+def test_shared_still_using_protects_only_that_booking():
+    ack = lambda now: 1 if local(now) in ("Tue 2026-11-10T12:00", "Tue 2026-11-10T14:00",
+                                          "Tue 2026-11-10T16:00") else None
+    res = drive_pair(L("2026-11-10T09:00"), 485, quiet, ack=ack)
+    first = next(e for e in pair_events(res, 0) if e[1] == RECLAIM)
+    assert first == ("Tue 2026-11-10T17:00", RECLAIM)
+    assert RECLAIM not in [a for _, a in pair_events(res, 1)]
+
+
+def test_shared_activity_resets_both():
+    def sample(now, i):
+        if local(now) == "Tue 2026-11-10T12:00":
+            return ServerUsage(now, 80.0, 30.0, (GpuUsage(1.0, 5.0),))
+        return quiet(now, i)
+
+    res = drive_pair(L("2026-11-10T09:00"), 125 + 60, sample)
+    busy = next(ds for n, ds in res if local(n) == "Tue 2026-11-10T12:00")
+    assert [d.state for d in busy] == [IdleState(0, None, None)] * 2
+
+
+def test_shared_ram_change_against_one_baseline_resets_both():
+    t = L("2026-11-10T10:00")
+    states = [IdleState(1, L("2026-11-10T09:00"), 30.0), IdleState(0, None, None)]
+    decs = evaluate_machine_idle(states, ServerUsage(t, 2.0, 35.0, (GpuUsage(1.0, 5.0),)),
+                                 t, "cpu", RULES)
+    assert [d.state for d in decs] == [IdleState(0, None, None)] * 2
+
+
+def test_machine_resource():
+    assert machine_resource(["cpu", "cpu"]) == "cpu"
+    assert machine_resource(["cpu", "cpu_gpu"]) == "cpu_gpu"

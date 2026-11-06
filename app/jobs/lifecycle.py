@@ -13,8 +13,9 @@ START_REMINDER = timedelta(minutes=30)
 END_REMINDER = timedelta(minutes=60)
 FREE = frozenset({StatusCode.AVAILABLE, StatusCode.BOOKED_SOON, StatusCode.SHAREABLE})
 FREED = frozenset({StatusCode.AVAILABLE, StatusCode.BOOKED_SOON})
-# SHAREABLE counts as busy (someone holds the server), so SHAREABLE -> AVAILABLE posts "freed";
-# it is not in FREED, so BOOKED <-> SHAREABLE flapping never posts.
+# SHAREABLE (one person in, one more may join) is "free" for watchers — they can book now —
+# but busy for the topic: SHAREABLE -> AVAILABLE posts "freed"; it is not in FREED, so
+# BOOKED <-> SHAREABLE (a partner joins or leaves) never posts.
 BUSY = frozenset({StatusCode.BOOKED, StatusCode.FREE_SOON, StatusCode.SHAREABLE})
 
 

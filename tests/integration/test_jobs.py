@@ -49,10 +49,11 @@ async def _snap(db, server_id, ts, cpu=1.0, ram=30.0, gpus=((0.0, 1.0),)):
     await db.flush()
 
 
-async def _book(db, user, server, start, end, resource="cpu_gpu", is_shared=False):
+async def _book(db, user, server, start, end, resource="cpu_gpu", is_shared=False,
+                shareable=False):
     b = Booking(
         user_id=user.id, server_id=server.id, start_at=start, end_at=end,
-        resource=resource, is_shared=is_shared,
+        resource=resource, is_shared=is_shared, shareable=shareable,
     )
     db.add(b)
     await db.flush()
@@ -133,40 +134,74 @@ async def test_idle_job_reclaims_after_three_warnings(db, store, quiet_booking):
     assert any(t.startswith("♻️ Your booking on gpu-01") for t in texts)
 
 
-async def test_idle_job_skips_shared_servers(db, store, make_user, quiet_booking, gpu_server):
+async def _partner(db, make_user, server, start="2026-11-10T09:00", end="2026-11-10T19:00"):
     other = await make_user(display_name="Bea")
-    shared = await _book(
-        db, other, gpu_server, L("2026-11-10T09:00"), L("2026-11-10T19:00"), is_shared=True
-    )
+    return other, await _book(db, other, server, L(start), L(end), resource="cpu", is_shared=True)
+
+
+async def test_idle_shared_machine_warns_both(db, store, make_user, quiet_booking, gpu_server):
+    bea, partner = await _partner(db, make_user, gpu_server)
     actions = await _drive_idle(
-        db, store, gpu_server.id, L("2026-11-10T09:00"), L("2026-11-10T17:05")
+        db, store, gpu_server.id, L("2026-11-10T09:00"), L("2026-11-10T11:00")
     )
-    assert actions == []
-    assert await _items(db) == []
-    for b in (quiet_booking, shared):
+    assert sorted(actions) == sorted([
+        (L("2026-11-10T11:00"), quiet_booking.id, IdleAction.WARN),
+        (L("2026-11-10T11:00"), partner.id, IdleAction.WARN),
+    ])
+    ana = await db.get(User, quiet_booking.user_id)
+    buttons = {it.payload["chat_id"]: it.payload["buttons"] for it in await _items(db)}
+    assert buttons == {
+        ana.telegram_id: [["I'm still using it", f"still:{quiet_booking.id}"]],
+        bea.telegram_id: [["I'm still using it", f"still:{partner.id}"]],
+    }
+
+
+async def test_idle_shared_reclaims_only_the_non_responder(db, store, make_user, quiet_booking,
+                                                           gpu_server):
+    bea, partner = await _partner(db, make_user, gpu_server)
+    now, end = L("2026-11-10T09:00"), L("2026-11-10T17:05")
+    actions = []
+    while now <= end:
+        await _snap(db, gpu_server.id, now)
+        for bid, action in await idle_check(db, store, now):
+            actions.append((now, bid, action))
+            if bid == partner.id and action == IdleAction.WARN:  # Bea answers every warning
+                assert await booking_svc.acknowledge_still_using(db, partner.id,
+                                                                 bea.telegram_id, now)
+        now += STEP
+    assert [(t, a) for t, bid, a in actions if bid == quiet_booking.id][-1] == (
+        L("2026-11-10T17:00"), IdleAction.RECLAIM)
+    assert IdleAction.RECLAIM not in [a for _, bid, a in actions if bid == partner.id]
+    await db.refresh(quiet_booking)
+    await db.refresh(partner)
+    assert quiet_booking.status == "reclaimed" and partner.status == "active"
+
+
+async def test_idle_shared_activity_resets_both(db, store, make_user, quiet_booking, gpu_server):
+    _, partner = await _partner(db, make_user, gpu_server)
+    await _drive_idle(db, store, gpu_server.id, L("2026-11-10T09:00"), L("2026-11-10T11:00"))
+    for b in (quiet_booking, partner):
         await db.refresh(b)
-        assert b.status == "active" and b.idle_since is None and b.idle_warnings == 0
+        assert b.idle_warnings == 1
+    busy = L("2026-11-10T11:05")
+    await _snap(db, gpu_server.id, busy, cpu=90.0)
+    assert await idle_check(db, store, busy) == []
+    for b in (quiet_booking, partner):
+        await db.refresh(b)
+        assert (b.idle_warnings, b.idle_since) == (0, None)
 
 
-async def test_idle_state_reset_while_shared(db, store, make_user, quiet_booking, gpu_server):
-    quiet_booking.idle_warnings = 3
-    quiet_booking.idle_since = L("2026-11-10T09:00")
-    quiet_booking.idle_ram_baseline = 30.0
-    other = await make_user(display_name="Bea")
-    await _book(
-        db, other, gpu_server, L("2026-11-10T10:00"), L("2026-11-10T14:00"), is_shared=True
-    )
-    await _snap(db, gpu_server.id, L("2026-11-10T13:00"))
-    assert await idle_check(db, store, L("2026-11-10T13:00")) == []
-    await db.refresh(quiet_booking)
-    assert (quiet_booking.idle_since, quiet_booking.idle_ram_baseline,
-            quiet_booking.idle_warnings) == (None, None, 0)
-    # The partner leaves; one quiet sample must not reclaim or warn on stale idle state.
-    await _snap(db, gpu_server.id, L("2026-11-10T14:00"))
-    assert await idle_check(db, store, L("2026-11-10T14:00")) == []
-    assert await _items(db) == []
-    await db.refresh(quiet_booking)
-    assert quiet_booking.status == "active" and quiet_booking.idle_warnings == 0
+async def test_idle_shared_gpu_counts_if_either_uses_it(db, store, make_user, gpu_server):
+    ana = await make_user()
+    await _book(db, ana, gpu_server, L("2026-11-10T09:00"), L("2026-11-10T19:00"), "cpu",
+                shareable=True)
+    _, partner = await _partner(db, make_user, gpu_server)
+    partner.shareable, partner.resource = False, "cpu_gpu"
+    now = L("2026-11-10T09:00")
+    while now <= L("2026-11-10T11:00"):
+        await _snap(db, gpu_server.id, now, gpus=((90.0, 50.0),))  # GPU busy
+        assert await idle_check(db, store, now) == []
+        now += STEP
 
 
 async def test_idle_job_skips_standalone(db, store, make_user, make_server):
@@ -346,39 +381,34 @@ async def test_freed_transition_posts_topic_and_fires_watchlist(db, store, make_
     assert len(await _items(db)) == n
 
 
-async def test_shareable_flapping_does_not_post_freed(db, store, make_user, make_server):
+async def test_partner_joining_and_leaving_does_not_post_freed(db, store, make_user,
+                                                               make_server):
     await _configure_topic(store)
-    owner = await make_user()
-    watcher = await make_user()
-    server = await make_server(
-        name="gpu-05", kind="grafana", has_gpu=True, gpu_count=1, shareable=True
-    )
-    await _book(db, owner, server, L("2026-11-10T09:00"), L("2026-11-10T19:00"))
+    owner, bea, watcher = await make_user(), await make_user(), await make_user()
+    server = await make_server(name="gpu-05", kind="grafana", has_gpu=True, gpu_count=1)
+    await _book(db, owner, server, L("2026-11-10T09:00"), L("2026-11-10T19:00"), shareable=True)
+    await _book(db, bea, server, L("2026-11-10T10:00"), L("2026-11-10T11:00"), is_shared=True)
     assert await watchlist.subscribe(db, watcher.id, server.id, L("2026-11-10T09:00"))
-
-    now = L("2026-11-10T09:30")
     codes = []
-    for busy in (True, False, True, False):
-        cpu = 90.0 if busy else 5.0
-        await _snap(db, server.id, now, cpu=cpu)
-        await booking_lifecycle(db, store, now)
+    for t in ("09:30", "10:30", "11:30"):
+        await booking_lifecycle(db, store, L(f"2026-11-10T{t}"))
         srv = await db.get(Server, server.id)
         await db.refresh(srv)
         codes.append(srv.last_status_code)
-        now += timedelta(minutes=90)  # beyond the 60-min share window
-    assert codes == ["booked", "shareable", "booked", "shareable"]
+    assert codes == ["shareable", "booked", "shareable"]
     assert await _topic_texts(db) == []
-    assert len(await _texts(db, watcher.telegram_id)) == 1
+    # A watcher hears that they can join; they are told once.
+    assert await _texts(db, watcher.telegram_id) == [
+        "🟣 gpu-05 is in use, but one more person can join. "
+        f"Book: https://portal.lab/book?server_id={server.id}"
+    ]
 
 
 async def test_shareable_to_available_posts_freed_once(db, store, make_user, make_server):
     await _configure_topic(store)
     owner = await make_user()
-    server = await make_server(
-        name="gpu-06", kind="grafana", has_gpu=True, gpu_count=1, shareable=True
-    )
-    await _book(db, owner, server, L("2026-11-10T09:00"), L("2026-11-10T12:00"))
-    await _snap(db, server.id, L("2026-11-10T09:30"), cpu=5.0)
+    server = await make_server(name="gpu-06", kind="grafana", has_gpu=True, gpu_count=1)
+    await _book(db, owner, server, L("2026-11-10T09:00"), L("2026-11-10T12:00"), shareable=True)
     await booking_lifecycle(db, store, L("2026-11-10T09:30"))
     srv = await db.get(Server, server.id)
     assert srv.last_status_code == "shareable"

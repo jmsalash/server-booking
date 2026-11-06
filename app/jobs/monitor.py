@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot import format
 from app.domain import share
-from app.domain.idle import IdleAction, IdleState, evaluate_idle
+from app.domain.idle import IdleAction, IdleState, evaluate_machine_idle, machine_resource
 from app.models import Booking, Server, User
 from app.services import booking as booking_svc
 from app.services import notify, usage
@@ -40,47 +40,44 @@ async def _active_now(
     return sorted(by_server.items())
 
 
-def _reset_idle(b: Booking) -> None:
-    b.idle_since = None
-    b.idle_ram_baseline = None
-    b.idle_warnings = 0
-
-
 async def idle_check(
     db: AsyncSession, store: SettingsStore, now: datetime
 ) -> list[tuple[int, IdleAction]]:
+    """Advance idle tracking for every running booking.
+
+    Quietness is judged per machine: on a shared machine both bookings advance together, each
+    owner is warned with their own "I'm still using it" button, and only a booking that ran out
+    of warnings is reclaimed — the other keeps the machine. Any activity resets both.
+    """
     rules = await store.get_rules()
     actions: list[tuple[int, IdleAction]] = []
     for server_id, bookings in await _active_now(db, now, lock=True):
-        if len(bookings) != 1 or bookings[0].is_shared:
-            # Idle tracking is paused while shared; start afresh once the partner leaves
-            # rather than resuming from an old idle_since / warning count.
-            for b in bookings:
-                _reset_idle(b)
-            await db.flush()
-            continue
-        b = bookings[0]
-        state = IdleState(b.idle_warnings, b.idle_since, b.idle_ram_baseline)
+        states = [IdleState(b.idle_warnings, b.idle_since, b.idle_ram_baseline) for b in bookings]
         latest = await usage.latest(db, server_id)
-        decision = evaluate_idle(state, latest, now, b.resource, rules)
-        b.idle_warnings = decision.state.warnings
-        b.idle_since = decision.state.idle_since
-        b.idle_ram_baseline = decision.state.ram_baseline
-        if decision.action == IdleAction.WARN:
-            b.last_warning_at = now
+        resource = machine_resource([b.resource for b in bookings])
+        decisions = evaluate_machine_idle(states, latest, now, resource, rules)
+        for b, decision in zip(bookings, decisions):
+            b.idle_warnings = decision.state.warnings
+            b.idle_since = decision.state.idle_since
+            b.idle_ram_baseline = decision.state.ram_baseline
+            if decision.action == IdleAction.WARN:
+                b.last_warning_at = now
         await db.flush()
-        if decision.action == IdleAction.WARN:
-            server = await db.get(Server, server_id)
-            owner = await db.get(User, b.user_id)
-            text = format.idle_warning(
-                server.name, decision.warning_number, rules.max_idle_warnings,
-                rules.idle_window_min,
-            )
-            await notify.dm(db, owner, text, now, buttons=[("I'm still using it", f"still:{b.id}")])
-        elif decision.action == IdleAction.RECLAIM:
-            await booking_svc.reclaim(db, store, b.id, now)
-        if decision.action != IdleAction.NONE:
-            actions.append((b.id, decision.action))
+        server = await db.get(Server, server_id)
+        for b, decision in zip(bookings, decisions):
+            if decision.action == IdleAction.WARN:
+                owner = await db.get(User, b.user_id)
+                text = format.idle_warning(
+                    server.name, decision.warning_number, rules.max_idle_warnings,
+                    rules.idle_window_min,
+                )
+                await notify.dm(db, owner, text, now,
+                                buttons=[("I'm still using it", f"still:{b.id}")])
+            elif decision.action == IdleAction.RECLAIM:
+                # Bookings are already locked (in id order) above; reclaim re-locks the same row.
+                await booking_svc.reclaim(db, store, b.id, now)
+            if decision.action != IdleAction.NONE:
+                actions.append((b.id, decision.action))
     return actions
 
 

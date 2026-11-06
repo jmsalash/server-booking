@@ -4,7 +4,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.types import ServerStatus
+from app.domain.types import ServerStatus, StatusCode
 from app.models import Server, User, WatchSubscription
 from app.services import notify
 from app.settings_store import K, SettingsStore
@@ -51,7 +51,11 @@ async def fire(
     if not rows:
         return 0
     portal = await store.get(K.PORTAL_BASE_URL)
-    text = f"🟢 {server.name} is now {status.label}."
+    if status.code == StatusCode.SHAREABLE:
+        # Someone is on it but lets one more person in: a watcher can join now.
+        text = f"🟣 {server.name} is in use, but one more person can join."
+    else:
+        text = f"🟢 {server.name} is now {status.label}."
     if portal:
         text += f" Book: {portal.rstrip('/')}/book?server_id={server.id}"
     for _sub, user in rows:
