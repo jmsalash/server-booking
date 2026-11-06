@@ -223,7 +223,9 @@ td .alert { margin: 0; }
 /* --- board server cards ------------------------------------------------------------------ */
 
 .server-card { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3) var(--s4); }
-.server-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s2); }
+/* Chip on its own line at the top right, then the name on a full-width line, then the sub-line,
+   so a long name and a long chip never squeeze each other. */
+.server-card__head { display: flex; flex-direction: column; align-items: stretch; gap: var(--s1); }
 .server-card__name { margin: 0; font-size: var(--fs-lg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .server-card__status { font-size: var(--fs-sm); font-weight: 550; margin: 0; }
 .server-card .actions { margin-top: auto; padding-top: var(--s2); border-top: 1px solid var(--line); min-height: calc(var(--s2) + 1.9rem); }
@@ -505,7 +507,7 @@ p.help + p.help { margin-top: var(--s2); }
 .only-available .cards:not(:has(.server-card--available))::before {
   content: "No machine is available right now."; color: var(--muted); grid-column: 1 / -1;
 }
-.server-card__head .chip { flex-shrink: 0; white-space: nowrap; }
+.server-card__head .chip { order: -1; align-self: flex-end; white-space: nowrap; }
 
 /* --- calendar: machines as rows, Mon–Sun as one track per row ---------------------------- */
 .cal-nav { display: flex; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); flex-wrap: wrap; margin-bottom: var(--s3); }
