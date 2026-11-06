@@ -12,6 +12,8 @@
     </ul>
   </nav>
   <div class="admin__main">
+    {% set saved = saved_messages.get(request.query_params.get("saved", "")) if request else None %}
+    {% if saved %}<div class="alert alert--success" role="status">✓ {{ saved }}</div>{% endif %}
     {% block admin_content %}{% endblock %}
   </div>
 </div>

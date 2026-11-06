@@ -113,7 +113,26 @@ def render(request: Request, name: str, ctx: dict, status: int = 200) -> HTMLRes
     return templates.TemplateResponse(request, name, ctx, status_code=status)
 
 
-def redirect(url: str) -> RedirectResponse:
+# After a save the admin layout says what happened (`?saved=<key>`; app.js then drops the
+# parameter from the address bar so a reload doesn't repeat the message).
+SAVED = {
+    "telegram": "Telegram settings saved.",
+    "grafana": "Grafana settings saved.",
+    "calendar": "Calendar settings saved.",
+    "portal": "Portal address saved.",
+    "rules": "Rules saved.",
+    "server": "Server saved.",
+    "server_new": "Server added.",
+    "booking_cancel": "Booking cancelled.",
+    "retry": "Queued for another try.",
+}
+templates.env.globals["saved_messages"] = SAVED
+
+
+def redirect(url: str, saved: str | None = None) -> RedirectResponse:
+    if saved is not None:
+        assert saved in SAVED, saved
+        url += ("&" if "?" in url else "?") + f"saved={saved}"
     return RedirectResponse(url, status_code=303)
 
 
@@ -367,7 +386,7 @@ async def integrations_telegram(
         "topic_posts": posts,
     })
     await db.commit()
-    return redirect("/admin/integrations")
+    return redirect("/admin/integrations", saved="telegram")
 
 
 @router.post("/integrations/grafana")
@@ -381,7 +400,7 @@ async def integrations_grafana(
         return await _render_integrations(
             request, db, store, user, 400 if error else 200,
             {"grafana": error} if error else None, {"grafana": message} if message else None)
-    return redirect("/admin/integrations")
+    return redirect("/admin/integrations", saved="grafana")
 
 
 @router.post("/integrations/calendar")
@@ -395,7 +414,7 @@ async def integrations_calendar(
         return await _render_integrations(
             request, db, store, user, 400 if error else 200,
             {"calendar": error} if error else None, {"calendar": message} if message else None)
-    return redirect("/admin/integrations")
+    return redirect("/admin/integrations", saved="calendar")
 
 
 @router.post("/integrations/portal")
@@ -411,7 +430,7 @@ async def integrations_portal(
     await store.set(K.PORTAL_BASE_URL, url)
     await record(db, user, "portal", "settings:portal", {"base_url": sanitize(url)})
     await db.commit()
-    return redirect("/admin/integrations")
+    return redirect("/admin/integrations", saved="portal")
 
 
 # --- servers --------------------------------------------------------------------------------
@@ -776,7 +795,7 @@ async def server_create(
                                    [f"A server named “{values['name']}” already exists."], 400)
     await record(db, user, "server_create", f"server:{server.id}", fields)
     await db.commit()
-    return redirect("/admin/servers")
+    return redirect("/admin/servers", saved="server_new")
 
 
 @router.get("/servers/{server_id}")
@@ -818,7 +837,7 @@ async def server_update(
             return await _render_servers(
                 request, db, store, user,
                 notice=f"{server.name} disabled. {remaining} {noun} on this server.")
-    return redirect("/admin/servers")
+    return redirect("/admin/servers", saved="server")
 
 
 @router.post("/servers/{server_id}/fetch")
@@ -1079,7 +1098,7 @@ async def rules_save(
     await store.set_rules(rules)
     await record(db, user, "rules", "settings:rules", rules.to_dict())
     await db.commit()
-    return redirect("/admin/rules")
+    return redirect("/admin/rules", saved="rules")
 
 
 # --- bookings -------------------------------------------------------------------------------
@@ -1130,7 +1149,7 @@ async def bookings_cancel(
                                  now=clock.utcnow(), reason=reason)
     await record(db, user, "booking_cancel", f"booking:{booking_id}", {"reason": reason})
     await db.commit()
-    return redirect("/admin/bookings")
+    return redirect("/admin/bookings", saved="booking_cancel")
 
 
 # --- health ---------------------------------------------------------------------------------
@@ -1209,7 +1228,7 @@ async def health_retry(
     )
     await record(db, user, "outbox_retry", f"outbox:{kind}", {"count": result.rowcount})
     await db.commit()
-    return redirect("/admin/health")
+    return redirect("/admin/health", saved="retry")
 
 
 # --- audit ----------------------------------------------------------------------------------

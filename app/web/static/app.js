@@ -80,6 +80,13 @@
     setBusy(form, e.submitter);
   });
 
+  // "✓ Saved" messages come from ?saved=…: show it once, not again on reload.
+  if (/[?&]saved=/.test(location.search)) {
+    var u = new URL(location.href);
+    u.searchParams.delete("saved");
+    history.replaceState(null, "", u.pathname + u.search + u.hash);
+  }
+
   // Coming back with the browser's Back button may restore the page as it was left.
   window.addEventListener("pageshow", function (e) { if (e.persisted) clear(); });
 })();

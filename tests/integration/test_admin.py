@@ -152,7 +152,9 @@ async def test_member_board_has_no_admin_link(client, logged_in_member):
 async def test_add_server(client, logged_in_admin, db):
     r = await client.post("/admin/servers/new", data={**SERVER_FORM, "has_gpu": "on",
                                                       "gpu_count": "2"})
-    assert r.status_code == 303 and r.headers["location"] == "/admin/servers"
+    assert r.status_code == 303 and r.headers["location"] == "/admin/servers?saved=server_new"
+    assert "✓ Server added." in (await client.get(r.headers["location"])).text
+    assert "✓" not in (await client.get("/admin/servers")).text
     s = await db.scalar(select(Server).where(Server.name == "cpu-07"))
     assert (s.kind, s.has_gpu, s.gpu_count, s.enabled, s.grafana_instance) == (
         "grafana", True, 2, True, None)
@@ -1249,3 +1251,14 @@ async def test_gpu_sync_with_gpu_query_failing_changes_nothing(client, logged_in
 
 async def test_gpu_sync_forbidden_for_members(client, logged_in_member, grafana):
     assert (await client.post("/admin/servers/import/sync-gpus")).status_code == 403
+
+
+async def test_saves_say_so(client, logged_in_admin):
+    r = await client.post("/admin/rules", data=_rules_form())
+    assert r.headers["location"] == "/admin/rules?saved=rules"
+    assert "✓ Rules saved." in (await client.get(r.headers["location"])).text
+    r = await client.post("/admin/integrations/portal", data={"base_url": "https://portal.lab"})
+    assert r.headers["location"] == "/admin/integrations?saved=portal"
+    assert "✓ Portal address saved." in (await client.get(r.headers["location"])).text
+    # Unknown keys show nothing.
+    assert "✓" not in (await client.get("/admin/rules?saved=<script>")).text
