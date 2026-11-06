@@ -6,6 +6,9 @@ machine-booking topic, bookings are mirrored to Google Calendar, and Grafana
 (Prometheus) metrics are used to allow sharing a busy-but-not-full server and to
 reclaim servers that were booked but sit idle.
 
+How it works for lab users (booking, sharing, idle machines, the bot):
+[USER_GUIDE.md](USER_GUIDE.md).
+
 Components: `web` (FastAPI), `worker` (Telegram bot, scheduler, Grafana/Calendar
 sync), `db` (PostgreSQL 16). Secrets entered in the admin UI are encrypted with
 `data/secret.key`.
