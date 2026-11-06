@@ -13,8 +13,8 @@
 {% if bookings %}
 <div class="booking-list">
   {% for b in bookings %}
-  {% set idle = b.idle_warnings > 0 and b.start <= now %}
-  <article class="card booking{% if idle %} booking--idle{% endif %}">
+  {% set panel = idle.get(b.id) %}
+  <article class="card booking{% if panel and panel.danger %} booking--idle{% endif %}">
     <div class="booking__head">
       <h3>{{ names.get(b.server_id, "?") }}</h3>
       {% if b.start <= now %}<span class="badge badge--ok">In progress</span>{% else %}<span class="badge badge--accent">Upcoming</span>{% endif %}
@@ -27,10 +27,14 @@
     {% for x in with %}
     <p class="booking__with">Shared with <strong>{{ x.user_name }}</strong> <span class="muted">{{ ([x.start, b.start]|max)|day_hm(tz) }} – {{ ([x.end, b.end]|min)|day_hm(tz) }}</span> <span class="badge">{{ "CPU + GPU" if x.resource == "cpu_gpu" else "CPU" }}</span></p>
     {% endfor %}
-    {% if idle %}
-    <div class="alert alert--warning idle">
-      <span><strong>Idle warnings: {{ b.idle_warnings }}/{{ max_idle }}</strong> — the server looks unused; it will be reclaimed if this reaches {{ max_idle }}.</span>
-      <form method="post" action="/bookings/{{ b.id }}/still-using" class="inline"><button type="submit" class="btn btn--primary btn--sm">I'm still using it</button></form>
+    {% if panel %}
+    <div class="idle-panel{% if panel.danger %} idle-panel--danger{% endif %}">
+      <dl>
+        <div><dt>Activity</dt><dd class="{{ 'idle-panel__quiet' if panel.quiet else ('muted' if panel.activity == 'Usage unknown' else 'idle-panel__active') }}">{{ panel.activity }}</dd></div>
+        <div><dt>Idle warnings</dt><dd><strong>{{ panel.warnings }}</strong> <span class="muted">· {{ panel.explain }}</span></dd></div>
+        {% if panel.next_step %}<div><dt>Next</dt><dd>{{ panel.next_step }}</dd></div>{% endif %}
+      </dl>
+      {% if panel.offer_still_using %}<form method="post" action="/bookings/{{ b.id }}/still-using" class="inline"><button type="submit" class="btn btn--primary btn--sm">I'm still using it</button></form>{% endif %}
     </div>
     {% endif %}
     <div class="booking__foot">

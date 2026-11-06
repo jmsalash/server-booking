@@ -5,7 +5,10 @@ from enum import StrEnum
 
 from app.domain.rules import Rules
 from app.domain.readings import is_stale
-from app.domain.timeutil import in_working_hours, working_minutes
+from app.domain.status import format_hm_or_day
+from app.domain.timeutil import (
+    add_working_minutes, duration_text, in_working_hours, next_work_start, working_minutes,
+)
 from app.domain.types import ServerUsage
 
 
@@ -139,3 +142,74 @@ def quiet_since(
             break
         since = prev_ts = s.ts
     return since
+
+
+# --- "where do I stand" panel for My bookings --------------------------------------------------
+
+POLL = timedelta(minutes=5)  # a quiet run shorter than one poll is not shown
+
+
+def _ordinal(n: int) -> str:
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+@dataclass(frozen=True)
+class IdlePanel:
+    activity: str              # "Quiet for 1 h 20 min" / "Active" / "Usage unknown"
+    quiet: bool
+    warnings: str              # "1 of 3"
+    explain: str               # "Released after the 3rd warning."
+    next_step: str | None      # when the next warning (or the release) comes, if it stays quiet
+    danger: bool               # one warning (or none) left
+    offer_still_using: bool
+
+
+def next_idle_step_at(idle_since: datetime | None, now: datetime, rules: Rules) -> datetime | None:
+    """When idle tracking next acts (warns or releases) if the machine stays quiet: once the
+    idle window has passed in working hours since `idle_since` (or since now, before the
+    tracker has picked the quiet stretch up). Never earlier than now."""
+    at = add_working_minutes(idle_since or now, rules.idle_window_min, rules)
+    if at is None:
+        return None
+    return at if at > now else next_work_start(now, rules)
+
+
+def idle_panel(
+    snapshots: Sequence[ServerUsage], now: datetime, rules: Rules, uses_gpu: bool,
+    warnings: int, idle_since: datetime | None,
+) -> IdlePanel:
+    """What My bookings shows for one running booking on a monitored machine.
+
+    Quiet is judged on what the booking booked (a CPU-only booking ignores the GPU), as for
+    the idle warnings; the quiet time is wall-clock, the next warning counts working hours.
+    """
+    latest = max(snapshots, key=lambda s: s.ts, default=None)
+    unknown = (latest is None or is_stale(latest.ts, now, rules)
+               or (uses_gpu and not latest.gpus))
+    since = None if unknown else quiet_since(snapshots, now, rules, uses_gpu)
+    quiet = since is not None and now - since >= POLL
+    if unknown:
+        activity = "Usage unknown"
+    elif quiet:
+        activity = f"Quiet for {duration_text(int((now - since).total_seconds() // 60))}"
+    else:
+        activity = "Active"
+    n = rules.max_idle_warnings
+    next_step = None
+    if quiet:
+        at = next_idle_step_at(idle_since, now, rules)
+        if at is not None:
+            when = format_hm_or_day(at, rules.timezone, now)
+            if warnings >= n:
+                next_step = f"Will be released at ~{when} if it stays quiet"
+            elif not in_working_hours(now, rules) and at == next_work_start(now, rules):
+                next_step = f"Next warning when working hours resume ({when})"
+            else:
+                next_step = f"Next warning at ~{when} if it stays quiet"
+    return IdlePanel(
+        activity=activity, quiet=quiet, warnings=f"{warnings} of {n}",
+        explain=f"Released after the {_ordinal(n)} warning.", next_step=next_step,
+        danger=warnings > 0 and warnings >= n - 1,
+        offer_still_using=warnings > 0 or quiet,
+    )

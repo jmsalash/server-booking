@@ -7,12 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
 from app.domain.booking_rules import BookingError
+from app.domain.idle import IdlePanel, idle_panel
 from app.domain.rules import Rules
 from app.domain.status import STATUS_LABEL, format_day_hm, format_hm_or_day
 from app.domain.timeutil import floor_hour, parse_local
 from app.domain.types import BookingView, StatusCode
 from app.models import Booking, LoginToken, Server, Session, User
 from app.services import auth, board, booking, watchlist
+from app.services import usage as usage_svc
 from app.services.inventory import get_live, list_servers
 from app.settings_store import K, SettingsStore
 from app.web.deps import (
@@ -354,11 +356,29 @@ async def _render_me(
     bookings = await booking.user_bookings(db, user.id, now)
     return _render(request, "me.html", {
         "user": user, "bookings": bookings,
+        "idle": await _idle_panels(db, bookings, now, rules),
         "partners": await booking.partners(db, bookings, now),
         "subs": await watchlist.for_user(db, user.id), "names": names, "now": now,
         "tz": rules.timezone, "error": error, "notice": notice,
-        "max_idle": rules.max_idle_warnings,
     }, status)
+
+
+async def _idle_panels(
+    db: AsyncSession, bookings: list[BookingView], now: datetime, rules: Rules
+) -> dict[int, IdlePanel]:
+    """Idle panel per running booking on a live, Grafana-monitored machine."""
+    out: dict[int, IdlePanel] = {}
+    for b in bookings:
+        if not b.start <= now < b.end:
+            continue
+        server = await db.get(Server, b.server_id)
+        if server is None or server.kind != "grafana" or server.archived_at is not None:
+            continue
+        row = await db.get(Booking, b.id)
+        snaps = await usage_svc.recent(db, server.id, now - board.QUIET_LOOKBACK)
+        uses_gpu = server.has_gpu and b.resource == "cpu_gpu"
+        out[b.id] = idle_panel(snaps, now, rules, uses_gpu, b.idle_warnings, row.idle_since)
+    return out
 
 
 DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")

@@ -48,3 +48,42 @@ def working_minutes(start: datetime, end: datetime, rules: Rules) -> float:
                 total += (hi - lo).total_seconds() / 60
         day += timedelta(days=1)
     return total
+
+
+def duration_text(minutes: int) -> str:
+    """`45 min`, `2 h`, `2 h 15 min`."""
+    h, m = divmod(minutes, 60)
+    if not h:
+        return f"{m} min"
+    return f"{h} h" if not m else f"{h} h {m} min"
+
+
+def _work_spans(start: datetime, rules: Rules, days: int):
+    """Working-hour intervals (UTC) from `start`'s local day on, clipped to start at `start`."""
+    tz = ZoneInfo(rules.timezone)
+    ws, we = _hm(rules.work_start), _hm(rules.work_end)
+    day = start.astimezone(tz).date()
+    for _ in range(days):
+        if day.weekday() in rules.work_days:
+            lo = datetime.combine(day, ws, tzinfo=tz).astimezone(UTC)
+            hi = datetime.combine(day, we, tzinfo=tz).astimezone(UTC)
+            if hi > start:
+                yield max(lo, start), hi
+        day += timedelta(days=1)
+
+
+def add_working_minutes(start: datetime, minutes: float, rules: Rules) -> datetime | None:
+    """The first instant inside working hours by which `minutes` of working time have passed
+    since `start` (None if there are no working days)."""
+    left = minutes
+    for lo, hi in _work_spans(start, rules, days=15):
+        span = (hi - lo).total_seconds() / 60
+        if left < span:
+            return lo + timedelta(minutes=left)
+        left -= span
+    return None
+
+
+def next_work_start(dt: datetime, rules: Rules) -> datetime | None:
+    """`dt` if it is inside working hours, else when working hours next begin."""
+    return next((lo for lo, _hi in _work_spans(dt, rules, days=15)), None)

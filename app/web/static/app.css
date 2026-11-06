@@ -365,6 +365,14 @@ details[open] > summary { margin-bottom: var(--s2); }
 .extend input { width: auto; }
 .idle { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; margin: 0; }
 .idle .actions { margin: 0; }
+.idle-panel { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; padding: var(--s2) var(--s3); border-radius: var(--radius-sm); background: var(--surface-2); font-size: var(--fs-sm); }
+.idle-panel--danger { background: var(--danger-bg); box-shadow: inset 3px 0 0 var(--danger); }
+.idle-panel dl { margin: 0; display: grid; gap: .2rem; }
+.idle-panel dl > div { display: grid; grid-template-columns: 7.5em 1fr; gap: var(--s2); }
+.idle-panel dt { color: var(--muted); font-size: var(--fs-xs); font-weight: 550; align-self: center; }
+.idle-panel dd { margin: 0; }
+.idle-panel__active { color: var(--ok-fg); font-weight: 550; }
+.idle-panel__quiet { font-weight: 600; }
 .plain-list { list-style: none; padding: 0; margin: 0; }
 .plain-list > li { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: var(--s3) 0; border-bottom: 1px solid var(--line); }
 .plain-list > li:first-child { padding-top: 0; }

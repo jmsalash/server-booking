@@ -129,7 +129,8 @@ async def seed(db, store) -> dict:
         Booking(user_id=u["Dario Neri"].id, server_id=s["cpu-04"].id, start_at=hour + 2 * h,
                 end_at=hour + 6 * h, resource="cpu"),
         Booking(user_id=u["Ana Rossi"].id, server_id=s["gpu-05"].id, start_at=hour - h,
-                end_at=hour + 7 * h, resource="cpu_gpu", idle_warnings=2),
+                end_at=hour + 7 * h, resource="cpu_gpu", idle_warnings=2,
+                idle_since=NOW - timedelta(minutes=50)),
         # Ana's own shareable booking that Bob has joined (My bookings shows him).
         Booking(user_id=u["Ana Rossi"].id, server_id=s["cpu-03"].id, start_at=hour + 23 * h,
                 end_at=hour + 27 * h, resource="cpu", shareable=True),

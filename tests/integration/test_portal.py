@@ -716,15 +716,57 @@ async def _running(db, user, server, **kw):
     return await _add(db, user, server, NOW - timedelta(hours=1), NOW + timedelta(hours=1), **kw)
 
 
+async def _readings(db, server, minutes, cpu=1.0, until=NOW):
+    """A busy reading, then quiet ones every 5 min for `minutes` up to `until`."""
+    await usage.save_snapshot(db, server.id, ServerUsage(
+        until - timedelta(minutes=minutes + 5), 90.0, 30.0, ()))
+    for m in range(minutes, -1, -5):
+        await usage.save_snapshot(db, server.id, ServerUsage(until - timedelta(minutes=m),
+                                                             cpu, 30.0, ()))
+
+
 async def test_me_still_using_button_only_with_warnings(client, logged_in, db, make_server):
-    s1, s2 = await make_server(name="srv-1"), await make_server(name="srv-2")
+    s1 = await make_server(name="srv-1", kind="grafana")
+    s2 = await make_server(name="srv-2", kind="grafana")
     warned = await _running(db, logged_in, s1, idle_warnings=2)
     clean = await _running(db, logged_in, s2)
+    for s in (s1, s2):
+        await _readings(db, s, 0, cpu=80.0)  # busy now
     await db.commit()
     r = await client.get("/me")
     assert f"/bookings/{warned.id}/still-using" in r.text
     assert f"/bookings/{clean.id}/still-using" not in r.text
-    assert "Idle warnings: 2/3" in r.text
+    assert "2 of 3" in r.text and "idle-panel--danger" in r.text
+
+
+async def test_me_idle_panel_for_quiet_running_booking(client, logged_in, db, make_server,
+                                                       make_user):
+    s = await make_server(name="gpu-01", kind="grafana", has_gpu=True, gpu_count=1)
+    lone = await make_server(name="lab-pc")  # standalone: no panel
+    # Mon 09 11:20 Rome; quiet since 10:00, tracked since 10:20 with one warning.
+    b = await _running(db, logged_in, s, idle_warnings=1, idle_since=NOW - timedelta(hours=1))
+    await _running(db, logged_in, lone)
+    later = await _add(db, logged_in, s, NOW + timedelta(hours=3), NOW + timedelta(hours=5))
+    await _readings(db, s, 80)
+    await db.commit()
+    r = await client.get("/me")
+    assert r.text.count('<div class="idle-panel') == 1
+    for text in ("Quiet for 1 h 20 min", "1 of 3", "Released after the 3rd warning.",
+                 "Next warning at ~12:20 if it stays quiet", f"/bookings/{b.id}/still-using"):
+        assert text in r.text, text
+    assert "idle-panel--danger" not in r.text
+    assert f"/bookings/{later.id}/still-using" not in r.text
+
+
+async def test_me_idle_panel_unknown_and_active(client, logged_in, db, make_server):
+    s1 = await make_server(name="srv-1", kind="grafana")
+    s2 = await make_server(name="srv-2", kind="grafana")
+    await _running(db, logged_in, s1)
+    await _running(db, logged_in, s2)
+    await _readings(db, s2, 0, cpu=80.0)
+    await db.commit()
+    r = await client.get("/me")
+    assert "Usage unknown" in r.text and "Active" in r.text and "still-using" not in r.text
 
 
 async def test_still_using_resets_idle_state(client, logged_in, db, make_server):

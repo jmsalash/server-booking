@@ -2,6 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from app.domain.status import LEGEND_TEXT, STATUS_EMOJI, format_day_hm, format_hm_or_day
+from app.domain.timeutil import duration_text  # noqa: F401 - re-exported
 from app.domain.types import BookingView, DiskUsage, StatusCode
 from app.services.board import ServerCard
 
@@ -17,14 +18,6 @@ def _resource(b: BookingView) -> str:
 def _person(b: BookingView, tz: str, now: datetime | None) -> str:
     until = format_hm_or_day(b.end, tz, now) if now else format_day_hm(b.end, tz)
     return f"• {b.user_name} — {_resource(b)} — until {until}"
-
-
-def duration_text(minutes: int) -> str:
-    """`45 min`, `2 h`, `2 h 15 min`."""
-    h, m = divmod(minutes, 60)
-    if not h:
-        return f"{m} min"
-    return f"{h} h" if not m else f"{h} h {m} min"
 
 
 def _quiet(card: ServerCard, tz: str, now: datetime | None) -> list[str]:
