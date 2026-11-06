@@ -1,6 +1,17 @@
 {% macro bar(name, pct) -%}
 <div class="bar"><span class="bar__name">{{ name }}</span><span class="bar__track" role="presentation"><span class="bar__fill" style="width: {{ pct|round|int if pct is not none else 0 }}%"></span></span><span class="bar__pct">{{ (pct|round|int ~ '%') if pct is not none else '?' }}</span></div>
 {%- endmacro %}
+{% macro person(b) -%}
+{% set me = user and b.user_id == user.id %}
+<tr>
+  <td class="slots__who" title="{{ b.user_name }}">{% if me %}<strong>You</strong>{% else %}{{ b.user_name }}{% endif %}</td>
+  <td class="slots__uses"><span class="badge">{{ "CPU + GPU" if b.resource == "cpu_gpu" else "CPU" }}</span></td>
+  <td class="slots__until">until {{ b.end|hm_or_day(tz, now) }}</td>
+</tr>
+{%- endmacro %}
+{% macro note(text, until="") -%}
+<tr class="slots__note"><td colspan="{{ 2 if until else 3 }}" title="{{ text }}">{{ text }}</td>{% if until %}<td class="slots__until">{{ until }}</td>{% endif %}</tr>
+{%- endmacro %}
 <div class="cards">
   {% for c in cards %}
   <article class="card server-card">
@@ -12,12 +23,19 @@
       </div>
       <span class="chip chip--{{ c.status.code.value }}"><span class="dot dot--{{ c.status.code.value }}" aria-hidden="true"></span>{{ c.status.label }}</span>
     </header>
-    {# One fixed line about bookings, so booking a machine never changes the card's size. #}
-    {% set holders = c.status.holders|join(", ") %}
-    {% if holders %}{% set who = holders ~ (" until " ~ c.status.busy_until|day_hm(tz) if c.status.busy_until else "") %}
-    {% elif c.status.next_busy %}{% set who = "Next booking " ~ c.status.next_busy|day_hm(tz) %}
-    {% else %}{% set who = "No upcoming bookings" %}{% endif %}
-    <p class="server-card__who{{ ' muted' if not holders }}" title="{{ who }}">{% if holders %}<span class="muted">In use by</span> {% endif %}{{ who }}</p>
+    {# Always exactly two rows (Who · Uses · Until), so booking a machine never changes the card's size. #}
+    {% set people = c.current[:2] %}
+    <table class="slots">
+      <colgroup><col><col class="slots__uses"><col class="slots__until"></colgroup>
+      <thead class="visually-hidden"><tr><th>Who</th><th>Uses</th><th>Until</th></tr></thead>
+      <tbody>
+        {% if people %}{{ person(people[0]) }}
+        {% else %}{{ note("Free now" if c.server.enabled else "Not bookable") }}{% endif %}
+        {% if people|length > 1 %}{{ person(people[1]) }}
+        {% elif c.next_start %}{{ note("Next booking", "from " ~ c.next_start|hm_or_day(tz, now)) }}
+        {% else %}{{ note("No upcoming bookings") }}{% endif %}
+      </tbody>
+    </table>
     <div class="usage usage--grid">
       {% if c.server.kind == "standalone" %}
       <p class="usage__none">standalone — not monitored</p>
@@ -36,12 +54,14 @@
       {% endif %}
     </div>
     {% set own = mine.get(c.server.id) if mine else none %}
+    {% set j = join.get(c.server.id) if join else none %}
     <div class="actions">
       {% if c.server.enabled %}<a class="btn btn--primary btn--sm" href="/book?server_id={{ c.server.id }}">Book</a>{% endif %}
+      {% if j %}<a class="btn btn--join btn--sm" href="/book?server_id={{ c.server.id }}&amp;start={{ j.start|urlencode }}&amp;end={{ j.end|urlencode }}" title="Book alongside {{ j.with.user_name }} — shared machine">Join</a>{% endif %}
       {% if own and own.running %}
       <form method="post" action="/bookings/{{ own.booking.id }}/end" class="inline" data-confirm="End your booking on {{ c.server.name }}? It ends at the next full hour." onsubmit="return confirm(this.dataset.confirm)"><input type="hidden" name="next" value="/"><button type="submit" class="btn btn--danger btn--sm">End booking</button></form>
       {% elif own %}
-      <form method="post" action="/bookings/{{ own.booking.id }}/cancel" class="inline" data-confirm="Cancel your booking on {{ c.server.name }} ({{ own.booking.start|day_hm(tz) }})?" onsubmit="return confirm(this.dataset.confirm)"><input type="hidden" name="next" value="/"><button type="submit" class="btn btn--danger btn--sm">Cancel booking</button></form>
+      <form method="post" action="/bookings/{{ own.booking.id }}/cancel" class="inline" data-confirm="Cancel your booking on {{ c.server.name }} ({{ own.booking.start|day_hm(tz) }})?" onsubmit="return confirm(this.dataset.confirm)"><input type="hidden" name="next" value="/"><button type="submit" class="btn btn--danger btn--sm" title="Cancel your booking ({{ own.booking.start|day_hm(tz) }})">Cancel mine</button></form>
       {% endif %}
       {% if c.status.code.value != "available" and not (own and own.running) %}
       <form method="post" action="/watch/{{ c.server.id }}" class="inline"><button type="submit" class="btn btn--sm" title="Get a Telegram message when it is free">Notify me</button></form>

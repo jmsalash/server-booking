@@ -8,7 +8,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
-from app.domain.status import format_day_hm
+from app.domain.status import format_day_hm, format_hm_or_day
 from app.models import User
 from app.services import auth
 from app.settings_store import SettingsStore
@@ -20,6 +20,7 @@ LOGIN_MAX_AGE = 2 * int(auth.TOKEN_TTL.total_seconds())
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.filters["day_hm"] = format_day_hm
+templates.env.filters["hm_or_day"] = format_hm_or_day  # `18:00` today, else `Sat 07 18:00`
 templates.env.filters["local_input"] = (
     lambda dt, tz: dt.astimezone(ZoneInfo(tz)).strftime("%Y-%m-%dT%H:%M")
 )

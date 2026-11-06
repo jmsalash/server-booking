@@ -126,6 +126,8 @@ button:hover, .btn:hover, .button:hover { background: var(--surface-2); border-c
 .btn--primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
 .btn--danger { background: var(--surface); border-color: #e7b3ab; color: var(--danger); }
 .btn--danger:hover { background: var(--danger-bg); border-color: var(--danger); color: var(--danger-hover); }
+.btn--join { border-color: #d9cdf3; background: #f4f0fc; color: #5b3fa8; }
+.btn--join:hover { border-color: #8E6CD8; background: #ebe3fa; color: #4a3290; }
 .btn--sm { padding: .3rem .6rem; min-height: 1.85rem; font-size: var(--fs-xs); }
 .btn--block { width: 100%; }
 .btn--link, button.link {
@@ -184,6 +186,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 }
 .badge--accent { background: var(--accent-soft); color: #1e40af; }
 .badge--shared { background: #fff3d6; color: #6b4a00; }
+.badge--shareable { background: #f4f0fc; color: #5b3fa8; }
 .badge--ok { background: var(--ok-bg); color: var(--ok-fg); }
 .badge--warn { background: var(--warn-bg); color: var(--warn-fg); }
 .badge--danger { background: var(--danger-bg); color: var(--danger-fg); }
@@ -232,7 +235,19 @@ td .alert { margin: 0; }
 .usage--grid .bar { grid-template-columns: 2.9em 1fr 2.6em; gap: var(--s1); }
 .server-card__title { min-width: 0; }
 .server-card__sub { margin: 0; font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.server-card__who { margin: 0; font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Who · Uses · Until: always two rows of the same height, columns aligned across rows. */
+.slots { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--fs-sm); }
+.slots td { padding: 0; height: 1.6rem; vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+col.slots__uses { width: 5.2rem; }
+col.slots__until { width: 8.4rem; }
+.server-card { container-type: inline-size; }
+/* Narrow cards (three columns on a mid-size screen): give the name more room. */
+@container (max-width: 330px) {
+  col.slots__until { width: 7.2rem; }
+  .slots__until { font-size: var(--fs-xs); }
+}
+.slots__until { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.slots__note td { color: var(--muted); }
 .usage__none { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--muted); }
 .bar { display: grid; grid-template-columns: 5.6em 1fr 3em; gap: var(--s2); align-items: center; }
 .bar__name { color: var(--muted); font-size: var(--fs-xs); font-weight: 550; white-space: nowrap; }
@@ -340,6 +355,7 @@ details[open] > summary { margin-bottom: var(--s2); }
 .booking--idle { border-color: var(--warn-line); box-shadow: 0 0 0 1px var(--warn-line), var(--shadow); }
 .booking__head { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
 .booking__head h3 { margin: 0; font-size: var(--fs-lg); margin-right: var(--s1); }
+.booking__with { margin: 0; font-size: var(--fs-sm); }
 .booking__when { font-variant-numeric: tabular-nums; font-weight: 550; margin: 0; }
 .booking__foot { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; padding-top: var(--s3); border-top: 1px solid var(--line); }
 .extend { display: flex; align-items: flex-end; gap: var(--s2); flex-wrap: wrap; margin: 0; }
