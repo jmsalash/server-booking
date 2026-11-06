@@ -15,8 +15,8 @@ from app.services import usage
 from app.services.inventory import get_live, list_servers, to_info
 from app.settings_store import SettingsStore
 
-HEALTH_KEY = "health.last_poll"
-QUIET_LOOKBACK = timedelta(hours=12)  # bounds the snapshot query for quiet_since  # last worker poll, written by app.jobs.metrics
+HEALTH_KEY = "health.last_poll"  # last worker poll, written by app.jobs.metrics
+QUIET_LOOKBACK = timedelta(hours=12)  # bounds the snapshot query for quiet_since
 
 UPCOMING_WINDOW = timedelta(days=14)
 
@@ -70,7 +70,8 @@ async def _failed_last_poll(store: SettingsStore) -> set[str]:
 
 
 async def _card(
-    db: AsyncSession, server: Server, now: datetime, rules: Rules, failed: set[str]
+    db: AsyncSession, server: Server, now: datetime, rules: Rules, failed: set[str],
+    with_quiet: bool = False,
 ) -> ServerCard:
     info = to_info(server)
     bookings = await active_bookings(db, server.id, now)
@@ -87,7 +88,7 @@ async def _card(
                            key=lambda b: (b.is_shared, b.start, b.id)))
     next_start = next((b.start for b in bookings if b.start > now), None)
     quiet = None
-    if current and server.kind == "grafana" and not stale:
+    if with_quiet and current and server.kind == "grafana" and not stale:
         snaps = await usage.recent(db, server.id, now - QUIET_LOOKBACK)
         since = quiet_since(snaps, now, rules, info.has_gpu)
         if since is not None and now - since >= timedelta(minutes=rules.idle_window_min):
@@ -97,16 +98,21 @@ async def _card(
 
 
 async def build_card(
-    db: AsyncSession, store: SettingsStore, server_id: int, now: datetime
+    db: AsyncSession, store: SettingsStore, server_id: int, now: datetime,
+    with_quiet: bool = False,
 ) -> ServerCard:
+    """`with_quiet` also works out how long a machine in use has been quiet (bot only)."""
     server = await get_live(db, server_id)
-    return await _card(db, server, now, await store.get_rules(), await _failed_last_poll(store))
+    return await _card(db, server, now, await store.get_rules(), await _failed_last_poll(store),
+                       with_quiet)
 
 
-async def build_board(db: AsyncSession, store: SettingsStore, now: datetime) -> list[ServerCard]:
+async def build_board(
+    db: AsyncSession, store: SettingsStore, now: datetime, with_quiet: bool = False
+) -> list[ServerCard]:
     rules = await store.get_rules()
     failed = await _failed_last_poll(store)
-    return [await _card(db, s, now, rules, failed)
+    return [await _card(db, s, now, rules, failed, with_quiet)
             for s in await list_servers(db, include_disabled=True)]
 
 

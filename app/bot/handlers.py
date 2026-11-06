@@ -228,7 +228,8 @@ async def on_command(
         arg = " ".join(args).strip()
 
         if command in ("status", "free") and not (command == "status" and arg):
-            cards = [c for c in await board.build_board(db, store, now) if c.server.enabled]
+            cards = [c for c in await board.build_board(db, store, now, with_quiet=True)
+                     if c.server.enabled]
             if command == "free":
                 return Reply(fmt.free_list(cards, tz, portal, now))
             return Reply(fmt.status_list(cards, tz, portal, now))
@@ -239,7 +240,7 @@ async def on_command(
         if server is None:
             return Reply(f'Unknown server "{arg}". Try /status.')
         if command == "status":
-            card = await board.build_card(db, store, server.id, now)
+            card = await board.build_card(db, store, server.id, now, with_quiet=True)
             return Reply(fmt.server_detail(card, tz, portal, now))
         user = await _get_or_create_user(db, tg, status)
         if await watchlist.subscribe(db, user.id, server.id, now):

@@ -172,8 +172,10 @@ async def test_card_quiet_since_only_when_in_use_and_quiet_long_enough(db, store
         for m in range(0, 150, 5):  # 145 min of quiet
             await usage.save_snapshot(db, server.id, ServerUsage(NOW - timedelta(minutes=m),
                                                                  1.0, 30.0, ()))
-    card = await board.build_card(db, store, busy.id, NOW)
+    card = await board.build_card(db, store, busy.id, NOW, with_quiet=True)
     assert card.quiet_since == NOW - timedelta(minutes=145)
-    assert (await board.build_card(db, store, free.id, NOW)).quiet_since is None
-    await store.set_rules(replace(await store.get_rules(), idle_window_min=180))
+    # The web board does not ask for it (only the bot shows it).
     assert (await board.build_card(db, store, busy.id, NOW)).quiet_since is None
+    assert (await board.build_card(db, store, free.id, NOW, with_quiet=True)).quiet_since is None
+    await store.set_rules(replace(await store.get_rules(), idle_window_min=180))
+    assert (await board.build_card(db, store, busy.id, NOW, with_quiet=True)).quiet_since is None
