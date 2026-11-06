@@ -753,7 +753,8 @@ async def test_me_idle_panel_for_quiet_running_booking(client, logged_in, db, ma
     await db.commit()
     r = await client.get("/me")
     assert r.text.count('<div class="idle-panel') == 1
-    for text in ("Quiet for 1 h 20 min", "1 of 3", "Released after the 3rd warning.",
+    # Quiet for 80 min, but the booking began 1 h ago: counted from the booking.
+    for text in ("Quiet for 1 h<", "1 of 3", "Released after the 3rd warning.",
                  "Next warning at ~12:20 if it stays quiet", f"/bookings/{b.id}/still-using"):
         assert text in r.text, text
     assert "idle-panel--danger" not in r.text
@@ -811,7 +812,7 @@ async def test_still_using_ended_booking_refused(client, logged_in, db, make_ser
 
 def _slots(html: str, server_name: str) -> list[list[str]]:
     """The card's Who · Uses · Until rows as lists of cell texts."""
-    card = html.split(f'<h2 class="server-card__name">{server_name}</h2>')[1].split("</article>")[0]
+    card = html.split(f'title="{server_name}">{server_name}</h2>')[1].split("</article>")[0]
     body = card.split('<table class="slots">')[1].split("</tbody>")[0].split("<tbody>")[1]
     rows = re.findall(r"<tr[^>]*>(.*?)</tr>", body, re.S)
     return [[re.sub(r"<[^>]+>", "", c).strip() for c in re.findall(r"<td[^>]*>(.*?)</td>", r, re.S)]
@@ -819,7 +820,7 @@ def _slots(html: str, server_name: str) -> list[list[str]]:
 
 
 def _actions(html: str, server_name: str) -> str:
-    card = html.split(f'<h2 class="server-card__name">{server_name}</h2>')[1].split("</article>")[0]
+    card = html.split(f'title="{server_name}">{server_name}</h2>')[1].split("</article>")[0]
     return card.split('<div class="actions">')[1]
 
 
@@ -848,7 +849,7 @@ async def test_card_shows_both_people_and_you(client, logged_in, db, make_user, 
         ["You", "CPU + GPU", "until Tue 10 13:00"],
     ]
     assert 'title="Bob Longname-Sharington"' in r.text
-    assert "can share" not in r.text.split('<h2 class="server-card__name">pair</h2>')[1].split("</article>")[0]
+    assert "can share" not in r.text.split('title="pair">pair</h2>')[1].split("</article>")[0]
     acts = _actions(r.text, "pair")
     assert "Join" not in acts and "End booking" in acts and "Notify me" not in acts
 
@@ -932,3 +933,16 @@ async def test_about_page_explains_bot_and_rules(client, logged_in, db, store):
                  "14 days", "2 h", "Mon–Fri 09:00–19:00", "Join", 'href="/about"'):
         assert text in r.text, text
     assert "Telegram warning if RAM or a disk on your machine passes 90%" in r.text
+
+
+async def test_board_marks_available_cards_and_offers_filter(client, logged_in, db, make_user,
+                                                             make_server):
+    bob = await make_user(display_name="Bob")
+    await make_server(name="free-1")
+    busy = await make_server(name="busy-1")
+    await _add(db, bob, busy, NOW - timedelta(hours=1), NOW + timedelta(hours=6))
+    await db.commit()
+    page = await client.get("/")
+    assert 'id="only-available"' in page.text and "Show only available" in page.text
+    cards = (await client.get("/board/cards")).text
+    assert cards.count("server-card--available") == 1

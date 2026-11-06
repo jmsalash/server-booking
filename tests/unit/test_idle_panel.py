@@ -82,3 +82,12 @@ def test_busy_gpu_is_active_whatever_was_booked():
     busy_gpu = snaps(now, 40, gpu_util=95.0)
     assert idle_panel(busy_gpu, now, R, False, 0, None).activity == "Active"
     assert idle_panel(busy_gpu, now, R, True, 0, None).activity == "Active"
+
+
+def test_quiet_time_counts_from_booking_start():
+    """A machine quiet for hours before you booked it shows quiet since your booking."""
+    now = L("2026-11-10T14:20")
+    p = idle_panel(snaps(now, 115), now, R, False, 0, None,
+                   booking_start=now - timedelta(minutes=10))
+    assert p.activity == "Quiet for 10 min"
+    assert p.next_step == "Next warning at ~16:20 if it stays quiet"

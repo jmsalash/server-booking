@@ -114,7 +114,8 @@ def _snapshot_quiet(s: ServerUsage, baseline_ram: float, has_gpu: bool, rules: R
 
 
 def quiet_since(
-    snapshots: Sequence[ServerUsage], now: datetime, rules: Rules, has_gpu: bool
+    snapshots: Sequence[ServerUsage], now: datetime, rules: Rules, has_gpu: bool,
+    not_before: datetime | None = None,
 ) -> datetime | None:
     """Start of the machine's current quiet stretch, from its metric snapshots.
 
@@ -131,6 +132,8 @@ def quiet_since(
     prev_ts = None
     for s in ordered:
         if prev_ts is not None and prev_ts - s.ts > QUIET_MAX_GAP:
+            break
+        if not_before is not None and s.ts < not_before:  # quiet before the booking began
             break
         if not _snapshot_quiet(s, baseline, has_gpu, rules):
             break
@@ -171,7 +174,7 @@ def next_idle_step_at(idle_since: datetime | None, now: datetime, rules: Rules) 
 
 def idle_panel(
     snapshots: Sequence[ServerUsage], now: datetime, rules: Rules, has_gpu: bool,
-    warnings: int, idle_since: datetime | None,
+    warnings: int, idle_since: datetime | None, booking_start: datetime | None = None,
 ) -> IdlePanel:
     """What My bookings shows for one running booking on a monitored machine.
 
@@ -181,7 +184,8 @@ def idle_panel(
     latest = max(snapshots, key=lambda s: s.ts, default=None)
     unknown = (latest is None or is_stale(latest.ts, now, rules)
                or (has_gpu and not latest.gpus))
-    since = None if unknown else quiet_since(snapshots, now, rules, has_gpu)
+    # Quiet time counts from the booking's start at the earliest, never from before it.
+    since = None if unknown else quiet_since(snapshots, now, rules, has_gpu, booking_start)
     quiet = since is not None and now - since >= POLL
     if unknown:
         activity = "Usage unknown"

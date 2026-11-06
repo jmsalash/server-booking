@@ -90,7 +90,8 @@ async def _card(
     quiet = None
     if with_quiet and current and server.kind == "grafana" and not stale:
         snaps = await usage.recent(db, server.id, now - QUIET_LOOKBACK)
-        since = quiet_since(snaps, now, rules, info.has_gpu)
+        # Counted from when the current booking(s) began, not from before.
+        since = quiet_since(snaps, now, rules, info.has_gpu, min(b.start for b in current))
         if since is not None and now - since >= timedelta(minutes=rules.idle_window_min):
             quiet = since
     return ServerCard(info, status, latest, stale, upcoming, pending, current, next_start,

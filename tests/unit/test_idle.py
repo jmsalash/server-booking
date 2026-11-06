@@ -246,3 +246,10 @@ def test_quiet_since_latest_active():
     snaps = series(10)
     snaps[0] = ServerUsage(QT, 50.0, 30.0, (GpuUsage(1.0, 5.0),))
     assert quiet_since(snaps, QT, RULES, has_gpu=True) is None
+
+
+def test_quiet_since_never_before_the_booking_started():
+    snaps = [ServerUsage(QT - timedelta(minutes=m), 2.0, 30.0, ()) for m in range(0, 125, 5)]
+    assert quiet_since(snaps, QT, RULES, has_gpu=False) == QT - timedelta(minutes=120)
+    booked = QT - timedelta(minutes=10)
+    assert quiet_since(snaps, QT, RULES, has_gpu=False, not_before=booked) == booked

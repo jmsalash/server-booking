@@ -224,7 +224,7 @@ td .alert { margin: 0; }
 
 .server-card { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3) var(--s4); }
 .server-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s2); }
-.server-card__name { margin: 0; font-size: var(--fs-lg); overflow-wrap: anywhere; }
+.server-card__name { margin: 0; font-size: var(--fs-lg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .server-card__status { font-size: var(--fs-sm); font-weight: 550; margin: 0; }
 .server-card .actions { margin-top: auto; padding-top: var(--s2); border-top: 1px solid var(--line); min-height: calc(var(--s2) + 1.9rem); }
 
@@ -497,3 +497,12 @@ p.help + p.help { margin-top: var(--s2); }
 .about__cmds td:first-child { padding-right: var(--s3); white-space: nowrap; }
 .about__legend { list-style: none; padding: 0 !important; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .about__legend li { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
+
+/* --- board: available cards and the "only available" filter ----------------------------- */
+.server-card--available { background: #f3fbf5; border-color: #cfe9d6; }
+.board-filter { display: inline-flex; margin: 0 0 var(--s3); font-size: var(--fs-sm); }
+.only-available .server-card:not(.server-card--available) { display: none; }
+.only-available .cards:not(:has(.server-card--available))::before {
+  content: "No machine is available right now."; color: var(--muted); grid-column: 1 / -1;
+}
+.server-card__head .chip { flex-shrink: 0; white-space: nowrap; }

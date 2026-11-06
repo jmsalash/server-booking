@@ -9,10 +9,25 @@
   <a class="btn btn--primary" href="/book">Book a server</a>
 </div>
 {% include "_legend.html" %}
+<label class="check board-filter"><input type="checkbox" id="only-available"> Show only available</label>
 {% if monitoring_down %}
 <div class="alert alert--warning" role="status">Monitoring is down — usage data is stale.</div>
 {% endif %}
-<div hx-get="/board/cards" hx-trigger="every 60s" hx-swap="innerHTML">
+<div id="board-cards" hx-get="/board/cards" hx-trigger="every 60s" hx-swap="innerHTML">
   {% include "_board_cards.html" %}
 </div>
+<script>
+  // "Show only available": a class on the wrapper, so it survives the minute refresh.
+  (function () {
+    var box = document.getElementById("only-available");
+    var wrap = document.getElementById("board-cards");
+    function apply() { wrap.classList.toggle("only-available", box.checked); }
+    try { box.checked = localStorage.getItem("board.onlyAvailable") === "1"; } catch (e) {}
+    box.addEventListener("change", function () {
+      try { localStorage.setItem("board.onlyAvailable", box.checked ? "1" : "0"); } catch (e) {}
+      apply();
+    });
+    apply();
+  })();
+</script>
 {% endblock %}

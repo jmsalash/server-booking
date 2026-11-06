@@ -212,6 +212,7 @@ async def _board_ctx(db: AsyncSession, store: SettingsStore, user: User) -> dict
             join[c.server.id] = {"with": c.current[0], "start": local(start, rules.timezone),
                                  "end": local(end, rules.timezone)}
     return {"user": user, "cards": cards, "tz": rules.timezone, "legend": legend(rules),
+            "status_names": {c.value: label for c, label in STATUS_LABEL.items()},
             "monitoring_down": board.monitoring_down(cards), "mine": mine, "join": join,
             "now": now, "ram_alert": rules.ram_alert_pct, "disk_alert": rules.disk_alert_pct}
 
@@ -377,7 +378,8 @@ async def _idle_panels(
             continue
         row = await db.get(Booking, b.id)
         snaps = await usage_svc.recent(db, server.id, now - board.QUIET_LOOKBACK)
-        out[b.id] = idle_panel(snaps, now, rules, server.has_gpu, b.idle_warnings, row.idle_since)
+        out[b.id] = idle_panel(snaps, now, rules, server.has_gpu, b.idle_warnings, row.idle_since,
+                               b.start)
     return out
 
 
