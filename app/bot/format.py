@@ -83,25 +83,12 @@ def _usage_line(card: ServerCard) -> str:
     return " · ".join(parts)
 
 
-DETAIL_DISKS = 3
-
-
-def _disk_line(card: ServerCard) -> list[str]:
-    """`Disk: /data 96% · / 41%`, worst first, at most DETAIL_DISKS mounts."""
-    u = card.usage
-    if card.server.kind == "standalone" or card.pending or u is None or card.stale or not u.disks:
-        return []
-    worst = u.disks_worst_first()[:DETAIL_DISKS]
-    return ["Disk: " + " · ".join(f"{d.mount} {d.used_pct:.0f}%" for d in worst)]
-
-
 def server_detail(card: ServerCard, tz: str, portal_url: str, now: datetime) -> str:
     current = card.current
     lines = [_line(card, tz), *(_person(b, tz, now) for b in current), *_quiet(card, tz, now)]
     if card.status.code == StatusCode.SHAREABLE:
         lines.append(CAN_JOIN)
     lines.append(_usage_line(card))
-    lines += _disk_line(card)
     later = [b for b in card.upcoming if b.start > now][:DETAIL_NEXT]
     if later:
         lines.append("Next:")

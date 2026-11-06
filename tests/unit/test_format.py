@@ -163,17 +163,10 @@ def test_duration_text():
     assert duration_text(135) == "2 h 15 min"
 
 
-def test_detail_disk_line_worst_first_max_three():
-    disks = tuple(DiskUsage(m, p) for m, p in
-                  (("/", 41.0), ("/data", 96.0), ("/home", 12.0), ("/scratch", 70.4)))
-    u = ServerUsage(NOW, 1.0, 2.0, (), disks)
+def test_detail_has_no_disk_line():
+    u = ServerUsage(NOW, 1.0, 2.0, (), (DiskUsage("/", 41.0), DiskUsage("/data", 96.0)))
     text = server_detail(card(StatusCode.AVAILABLE, usage=u), TZ, URL, NOW)
-    assert "Disk: /data 96% · /scratch 70% · / 41%" in text and "/home" not in text
-    no_disks = server_detail(card(StatusCode.AVAILABLE, usage=ServerUsage(NOW, 1.0, 2.0, ())),
-                             TZ, URL, NOW)
-    assert "Disk:" not in no_disks
-    assert "Disk:" not in server_detail(card(StatusCode.AVAILABLE, usage=u, stale=True), TZ, URL,
-                                        NOW)
+    assert "Disk" not in text and "/data" not in text
 
 
 def test_full_texts():

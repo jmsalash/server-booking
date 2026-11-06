@@ -19,11 +19,7 @@
       <div class="server-card__title">
         <h2 class="server-card__name" title="{{ c.server.name }}">{{ c.server.name }}</h2>
         {% set models = (c.usage.gpus if c.usage and not c.stale else [])|map(attribute="short_model")|reject("none")|unique|list %}
-        {# A nearly full disk: one short red note on the existing sub-line, so the card keeps its size. #}
-        {% set live = c.usage if c.usage and not c.stale and not c.pending else none %}
-        {% set full_disk = (live.disks_worst_first()|first) if live and live.disks and disk_alert is defined else none %}
-        {% set full_disk = full_disk if full_disk and full_disk.used_pct >= disk_alert else none %}
-        <p class="server-card__sub">{% if full_disk %}<span class="usage__warn" title="Disk {{ full_disk.mount }} is {{ full_disk.used_pct|round|int }}% full">Disk {{ full_disk.used_pct|round|int }}%</span> · {% endif %}{% if models %}{{ (c.usage.gpus|length ~ "× ") if c.usage.gpus|length > 1 }}{{ models|join(", ") }}{% elif c.server.has_gpu %}{{ c.server.gpu_count }} GPU{{ "s" if c.server.gpu_count != 1 }}{% else %}CPU only{% endif %}</p>
+        <p class="server-card__sub">{% if models %}{{ (c.usage.gpus|length ~ "× ") if c.usage.gpus|length > 1 }}{{ models|join(", ") }}{% elif c.server.has_gpu %}{{ c.server.gpu_count }} GPU{{ "s" if c.server.gpu_count != 1 }}{% else %}CPU only{% endif %}</p>
       </div>
       <span class="chip chip--{{ c.status.code.value }}"><span class="dot dot--{{ c.status.code.value }}" aria-hidden="true"></span>{{ status_names[c.status.code.value] }}</span>
     </header>

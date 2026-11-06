@@ -118,7 +118,7 @@ async def test_usage_bars_for_fresh_metrics(client, logged_in, db, make_server):
     assert "bar__pct--warn" not in r.text and "usage__warn" not in r.text
 
 
-async def test_board_flags_nearly_full_ram_and_disk(client, logged_in, db, make_server):
+async def test_board_flags_nearly_full_ram_not_disk(client, logged_in, db, make_server):
     from app.domain.types import DiskUsage
     server = await make_server(name="mon-1", kind="grafana")
     await usage.save_snapshot(db, server.id, ServerUsage(
@@ -127,7 +127,7 @@ async def test_board_flags_nearly_full_ram_and_disk(client, logged_in, db, make_
     await db.commit()
     r = await client.get("/board/cards")
     assert '<span class="bar__pct bar__pct--warn">93%</span>' in r.text
-    assert 'title="Disk /data is 96% full">Disk 96%</span>' in r.text
+    assert "Disk" not in r.text and "96%" not in r.text
 
 
 async def test_monitoring_banner_when_all_stale(client, logged_in, db, make_server):
