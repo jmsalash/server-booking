@@ -80,6 +80,38 @@
     setBusy(form, e.submitter);
   });
 
+  // Live updates: parts of the page marked data-live reload when something changes (a
+  // booking made, ended, …; see app/web/live.py). The stream is only open while the tab is
+  // visible: browsers allow few connections per site, and hidden tabs don't need it.
+  if (document.querySelector("[data-live]") && window.EventSource && window.htmx) {
+    var stream = null, timer = null;
+    var refresh = function () {
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        if (busy) return; // a form is being sent: the next page shows the news
+        document.querySelectorAll("[data-live]").forEach(function (el) { htmx.trigger(el, "live"); });
+      }, 300);
+    };
+    var connect = function () {
+      if (stream) return;
+      stream = new EventSource("/live");
+      stream.onmessage = refresh;
+    };
+    var disconnect = function () { if (stream) { stream.close(); stream = null; } };
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { disconnect(); } else { connect(); refresh(); }
+    });
+    if (!document.hidden) connect();
+    // A wide calendar scrolls sideways on phones: keep the position across a refresh.
+    var scrollLeft = 0;
+    document.addEventListener("htmx:beforeSwap", function () {
+      var c = document.querySelector(".cal"); scrollLeft = c ? c.scrollLeft : 0;
+    });
+    document.addEventListener("htmx:afterSwap", function () {
+      var c = document.querySelector(".cal"); if (c) c.scrollLeft = scrollLeft;
+    });
+  }
+
   // "✓ Saved" messages come from ?saved=…: show it once, not again on reload.
   if (/[?&]saved=/.test(location.search)) {
     var u = new URL(location.href);

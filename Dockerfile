@@ -11,4 +11,4 @@ RUN useradd --system --uid 1000 --create-home booking \
 USER booking
 VOLUME /data
 # CMD is overridden per service in docker-compose.yml
-CMD ["uvicorn", "app.web.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+CMD ["uvicorn", "app.web.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--timeout-graceful-shutdown", "3"]

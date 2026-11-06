@@ -4,7 +4,7 @@
 <div class="page-head">
   <div>
     <h1>Servers</h1>
-    <p class="muted">Live status, refreshed every minute. Times in {{ tz }}.</p>
+    <p class="muted">Live status. Times in {{ tz }}.</p>
   </div>
   <a class="btn btn--primary" href="/book">Book a server</a>
 </div>
@@ -13,7 +13,7 @@
 {% if monitoring_down %}
 <div class="alert alert--warning" role="status">Monitoring is down — usage data is stale.</div>
 {% endif %}
-<div id="board-cards" hx-get="/board/cards" hx-trigger="every 60s" hx-swap="innerHTML">
+<div id="board-cards" data-live hx-get="/board/cards" hx-trigger="every 60s, live" hx-swap="innerHTML">
   {% include "_board_cards.html" %}
 </div>
 <script>

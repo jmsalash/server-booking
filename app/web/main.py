@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -15,7 +16,7 @@ from app.crypto import SecretBox, load_or_create_key
 from app.db import make_engine, make_sessionmaker
 from app.services import machine_identity, setup
 from app.settings_store import SettingsStore
-from app.web import admin, portal, setup_routes
+from app.web import admin, live, portal, setup_routes
 from app.web.deps import LoginRequired, make_login_signer, make_signer
 
 setup_log = logging.getLogger("app.setup")
@@ -54,14 +55,21 @@ def create_app(
             await db.commit()
         if code:
             setup_log.warning("SETUP CODE: %s", code)
+        bind = sessionmaker.kw.get("bind")
+        listener = asyncio.create_task(live.listen(bind, app.state.live)) if bind else None
+        if engine is not None:  # served for real (tests pass their own sessionmaker)
+            live.close_on_server_exit(app.state.live)
         try:
             yield
         finally:
+            if listener is not None:
+                listener.cancel()
             if engine is not None:
                 await engine.dispose()
 
     app = FastAPI(title="Server Booking", lifespan=lifespan)
     app.state.sessionmaker = sessionmaker
+    app.state.live = live.LiveHub()
     app.state.data_dir = data_dir
     app.state.box = SecretBox(key)
     app.state.signer = make_signer(key)
@@ -116,6 +124,7 @@ def create_app(
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.include_router(portal.router)
+    app.include_router(live.router)
     app.include_router(setup_routes.router)
     app.include_router(admin.router)
 

@@ -204,7 +204,11 @@ re-opens setup.
 **Reverse proxy.** The proxy must preserve the `Host` header (POSTs with an
 `Origin` that differs from `Host` are rejected). Uvicorn runs with
 `--proxy-headers`, so pass `X-Forwarded-For`/`-Proto`; the setup-code rate limit
-is per client IP and relies on it. Serve over HTTPS.
+is per client IP and relies on it. Serve over HTTPS. The board and calendar get
+live updates over a long-lived stream (`GET /live`, server-sent events): the
+response sets `X-Accel-Buffering: no`, which nginx honours; other proxies must not
+buffer it, and their read timeout must be above 25 s (the stream pings every 25 s).
+If the stream can't get through, the pages still refresh every minute.
 
 **Logs** never contain secrets (tokens, passwords, setup-code attempts are not
 logged; HTTP client logs are silenced). The setup code itself is printed to the

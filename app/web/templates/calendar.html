@@ -18,6 +18,7 @@
   </div>
 </div>
 {% if rows %}
+<div id="cal-body" data-live hx-get="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}" hx-trigger="every 60s, live" hx-select="#cal-body" hx-swap="outerHTML">
 <div class="cal" role="region" aria-label="Bookings for {{ range }}" tabindex="0">
   <div class="cal__grid">
     {# Day lines, office hours, today and "now" sit under the bars, across every row. #}
@@ -62,6 +63,7 @@
     </div>
     {% endfor %}
   </div>
+</div>
 </div>
 <ul class="legend cal-legend" aria-label="Calendar legend">
   <li><span class="cal-swatch cal-bar--mine" aria-hidden="true"></span>You</li>

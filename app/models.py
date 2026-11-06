@@ -68,6 +68,9 @@ class Server(Base):
               postgresql_where=text("archived_at IS NULL")),
     )
 
+    # Columns whose changes open pages show at once (app/db.py).
+    __live__ = ("name", "has_gpu", "gpu_count", "enabled", "last_status_code", "archived_at")
+
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String)
     hostname: Mapped[str] = mapped_column(String)
@@ -103,6 +106,9 @@ class Booking(Base):
             where=text("status = 'active' AND NOT is_shared"),
         ),
     )
+
+    __live__ = ("user_id", "server_id", "start_at", "end_at", "resource", "status", "is_shared",
+                "shareable")
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
