@@ -16,6 +16,8 @@ The limits below are the defaults. The admins can change them; the **About** pag
 
 Pick a machine and a time on the **Book** page; bookings run in whole hours, up to 14 days at a time.
 
+![The Book page: machine, start and end, CPU or CPU + GPU, and Allow sharing. On the right, the machine's bookings for the next 14 days.](guide-images/book.png)
+
 - **What you will use:** choose **CPU** or **CPU + GPU**. Either way the whole machine is yours; it tells others what you are running.
 - **Forgot to book?** A booking can start up to 24 hours in the past, as long as nobody else had the machine then.
 - **Allow sharing:** tick it if one more person may use the machine with you (see Sharing below).
@@ -24,11 +26,17 @@ Pick a machine and a time on the **Book** page; bookings run in whole hours, up 
   - **End now** when you are done: the machine is free for others straight away.
   - **Cancel** a booking that has not started yet.
 
-Ending and cancelling ask you to confirm first. Your bookings also appear in the lab's Google Calendar.
+Ending and cancelling ask you to confirm first.
+
+![Pressing End now asks you to confirm before the booking ends.](guide-images/end-confirm.png)
+
+Your bookings also appear in the lab's Google Calendar.
 
 ## The board and the calendar
 
 The **Board** shows every machine with its status, who is using it, until when, and its live CPU, RAM and GPU use. It updates by itself when anyone books or ends a booking.
+
+![The board: each card shows the machine's status, who has it and until when, and its live usage. The buttons at the bottom change with the machine: Book, Join, Notify me, or End booking for your own.](guide-images/board.png)
 
 | Colour | Status | Meaning |
 | --- | --- | --- |
@@ -42,6 +50,8 @@ The **Board** shows every machine with its status, who is using it, until when, 
 - Tick **Show only available** at the top to hide busy machines.
 - **Notify me** on a busy machine sends you a Telegram message once nobody is using it. The button then reads **Notifying you**; you can stop it under My bookings.
 - The **Calendar** shows everyone's bookings for a week, one row per machine. Your own bookings are in blue.
+
+![The calendar: one row per machine, one column per day. The red line is now; your bookings are blue, a purple edge marks a booking open to sharing.](guide-images/calendar.png)
 
 ## Sharing a machine
 
@@ -60,6 +70,8 @@ A booked machine left quiet during working hours is given back to others, after 
 - Each warning has an **I'm still using it** button, which resets the count. The same button is on My bookings.
 - After 3 warnings the booking is released and the machine becomes free.
 - **My bookings** shows how long your machine has been quiet, how many warnings you have had, and when the next one would come.
+
+![A booking on My bookings with its idle panel: quiet for 55 minutes, 2 of 3 warnings, and the I'm still using it button.](guide-images/me.png)
 
 You also get a Telegram message if your machine's RAM, or one of its disks, gets 90% full during your booking.
 
